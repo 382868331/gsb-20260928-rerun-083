@@ -1,0 +1,207 @@
+{
+  "id": "board-demo",
+  "name": "验证板: 跨层交叉 + 细小间隙",
+  "revision": 0,
+  "outline": [
+    {
+      "x": 0,
+      "y": 0
+    },
+    {
+      "x": 60000000,
+      "y": 0
+    },
+    {
+      "x": 60000000,
+      "y": 40000000
+    },
+    {
+      "x": 0,
+      "y": 40000000
+    }
+  ],
+  "layers": [
+    "top",
+    "bottom"
+  ],
+  "nets": [
+    {
+      "id": "net-gnd",
+      "name": "GND"
+    },
+    {
+      "id": "net-vcc",
+      "name": "VCC"
+    },
+    {
+      "id": "net-sig",
+      "name": "SIG"
+    }
+  ],
+  "pads": [
+    {
+      "id": "pad-sig-in",
+      "netId": "net-sig",
+      "layer": "top",
+      "shape": "circle",
+      "x": 10000000,
+      "y": 10000000,
+      "diameter": 2000000,
+      "w": 0,
+      "h": 0,
+      "drill": 0
+    },
+    {
+      "id": "pad-sig-out",
+      "netId": "net-sig",
+      "layer": "bottom",
+      "shape": "rect",
+      "x": 55000000,
+      "y": 30000000,
+      "diameter": 0,
+      "w": 3000000,
+      "h": 2000000,
+      "drill": 0
+    },
+    {
+      "id": "pad-gnd-a",
+      "netId": "net-gnd",
+      "layer": "top",
+      "shape": "circle",
+      "x": 10000000,
+      "y": 25000000,
+      "diameter": 1500000,
+      "w": 0,
+      "h": 0,
+      "drill": 0
+    },
+    {
+      "id": "pad-gnd-gap",
+      "netId": "net-gnd",
+      "layer": "top",
+      "shape": "circle",
+      "x": 29050000,
+      "y": 25000000,
+      "diameter": 1500000,
+      "w": 0,
+      "h": 0,
+      "drill": 0
+    },
+    {
+      "id": "pad-vcc-th",
+      "netId": "net-vcc",
+      "layer": "through",
+      "shape": "circle",
+      "x": 10000000,
+      "y": 35000000,
+      "diameter": 2200000,
+      "w": 0,
+      "h": 0,
+      "drill": 1000000
+    }
+  ],
+  "traces": [
+    {
+      "id": "trace-sig-top",
+      "netId": "net-sig",
+      "layer": "top",
+      "width": 500000,
+      "points": [
+        {
+          "x": 10000000,
+          "y": 10000000
+        },
+        {
+          "x": 40000000,
+          "y": 10000000
+        }
+      ]
+    },
+    {
+      "id": "trace-sig-cross",
+      "netId": "net-sig",
+      "layer": "bottom",
+      "width": 500000,
+      "points": [
+        {
+          "x": 25000000,
+          "y": 2000000
+        },
+        {
+          "x": 25000000,
+          "y": 18000000
+        }
+      ]
+    },
+    {
+      "id": "trace-sig-via",
+      "netId": "net-sig",
+      "layer": "top",
+      "width": 500000,
+      "points": [
+        {
+          "x": 40000000,
+          "y": 10000000
+        },
+        {
+          "x": 50000000,
+          "y": 10000000
+        },
+        {
+          "x": 50000000,
+          "y": 15000000
+        }
+      ]
+    },
+    {
+      "id": "trace-sig-bot",
+      "netId": "net-sig",
+      "layer": "bottom",
+      "width": 500000,
+      "points": [
+        {
+          "x": 50000000,
+          "y": 15000000
+        },
+        {
+          "x": 50000000,
+          "y": 25000000
+        },
+        {
+          "x": 55000000,
+          "y": 30000000
+        }
+      ]
+    },
+    {
+      "id": "trace-gnd-gap",
+      "netId": "net-gnd",
+      "layer": "top",
+      "width": 400000,
+      "points": [
+        {
+          "x": 10000000,
+          "y": 25000000
+        },
+        {
+          "x": 28000000,
+          "y": 25000000
+        }
+      ]
+    }
+  ],
+  "vias": [
+    {
+      "id": "via-sig",
+      "netId": "net-sig",
+      "x": 50000000,
+      "y": 15000000,
+      "diameter": 1200000,
+      "drill": 600000,
+      "layers": [
+        "top",
+        "bottom"
+      ]
+    }
+  ]
+}
