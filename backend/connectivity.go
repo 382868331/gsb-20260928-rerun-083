@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 )
 
 // copperShape is one piece of copper owned by an element on one layer.
@@ -129,28 +130,55 @@ func CheckBoard(b *Board) []CheckError {
 
 	var errs []CheckError
 
-	// Shorts: physical contact between copper of two different nets.
-	seenShort := map[string]bool{}
+	// Shorts: a connected component of copper that carries two or more
+	// different net names is a short — even when the bridge is copper
+	// with no net assigned (uncommitted trace/via). Locate the short on
+	// the contact path that joins the two nets so the user can see
+	// exactly which objects connect them.
+	adj := map[string][]contactEdge{}
 	for _, c := range contacts {
-		na, nb := c.a.netID, c.b.netID
-		if na == "" || nb == "" || na == nb {
+		adj[c.a.elemID] = append(adj[c.a.elemID], contactEdge{c.b.elemID, c.at})
+		adj[c.b.elemID] = append(adj[c.b.elemID], contactEdge{c.a.elemID, c.at})
+	}
+	compNets := map[string]map[string]bool{} // component root -> nets present
+	for id, net := range elemNet {
+		if net == "" {
 			continue
 		}
-		key := na + "|" + nb
-		if na > nb {
-			key = nb + "|" + na
+		root := uf.find(id)
+		if compNets[root] == nil {
+			compNets[root] = map[string]bool{}
 		}
-		if seenShort[key] {
+		compNets[root][net] = true
+	}
+	roots := make([]string, 0, len(compNets))
+	for root := range compNets {
+		roots = append(roots, root)
+	}
+	sort.Strings(roots)
+	for _, root := range roots {
+		nets := compNets[root]
+		if len(nets) < 2 {
 			continue
 		}
-		seenShort[key] = true
+		names := make([]string, 0, len(nets))
+		for n := range nets {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		path, at := shortPath(adj, elemNet, root, names[0])
+		m := at[len(at)/2]
+		netNames := make([]string, len(names))
+		for i, n := range names {
+			netNames[i] = b.netName(n)
+		}
 		errs = append(errs, CheckError{
 			Type: "short",
-			Message: fmt.Sprintf("短路: 网络 %s 与 %s 在 (%.3f, %.3f) mm 处接触",
-				b.netName(na), b.netName(nb), c.at.x/1e6, c.at.y/1e6),
-			Nets:     []string{na, nb},
-			Elements: []string{c.a.elemID, c.b.elemID},
-			X:        c.at.x, Y: c.at.y, X2: c.at.x, Y2: c.at.y,
+			Message: fmt.Sprintf("短路: 网络 %s 经 %s 在 (%.3f, %.3f) mm 处连通",
+				strings.Join(netNames, " 与 "), strings.Join(path, " -> "), m.x/1e6, m.y/1e6),
+			Nets:     names,
+			Elements: path,
+			X:        m.x, Y: m.y, X2: m.x, Y2: m.y,
 		})
 	}
 
@@ -198,6 +226,61 @@ func CheckBoard(b *Board) []CheckError {
 		}
 	}
 	return errs
+}
+
+type contactEdge struct {
+	to string
+	at fpt
+}
+
+// shortPath finds a contact path inside one component from an element of
+// net `from` to an element of any other named net, returning the element
+// ids in order and the contact point of each hop along the path.
+func shortPath(adj map[string][]contactEdge, elemNet map[string]string, root, from string) ([]string, []fpt) {
+	prev := map[string]string{}
+	prevAt := map[string]fpt{}
+	seen := map[string]bool{}
+	var queue []string
+	ids := make([]string, 0, len(elemNet))
+	for id := range elemNet {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		if elemNet[id] == from {
+			seen[id] = true
+			queue = append(queue, id)
+		}
+	}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		if net := elemNet[cur]; net != "" && net != from {
+			// Reconstruct the path back to a `from` element.
+			var path []string
+			var ats []fpt
+			for node := cur; ; {
+				path = append([]string{node}, path...)
+				p, ok := prev[node]
+				if !ok {
+					break
+				}
+				ats = append([]fpt{prevAt[node]}, ats...)
+				node = p
+			}
+			return path, ats
+		}
+		for _, e := range adj[cur] {
+			if !seen[e.to] {
+				seen[e.to] = true
+				prev[e.to] = cur
+				prevAt[e.to] = e.at
+				queue = append(queue, e.to)
+			}
+		}
+	}
+	// Unreachable in a valid component; fall back to the root element.
+	return []string{root}, []fpt{{}}
 }
 
 func toSet(ids []string) map[string]bool {

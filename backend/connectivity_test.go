@@ -138,6 +138,102 @@ func TestSameLayerJunctionConnects(t *testing.T) {
 	}
 }
 
+// Copper with no net assigned still conducts: an un-netted trace
+// touching pads of two different nets is a short, and the report must
+// name every object on the connecting path.
+func TestShortThroughUnnettedTrace(t *testing.T) {
+	b := baseBoard()
+	b.Pads = []Pad{
+		{ID: "p1", NetID: "n1", Layer: "top", Shape: "circle",
+			X: 10 * mm, Y: 25 * mm, Diameter: 2 * mm},
+		{ID: "p2", NetID: "n2", Layer: "top", Shape: "circle",
+			X: 40 * mm, Y: 25 * mm, Diameter: 2 * mm},
+	}
+	// Multi-segment trace with NO net, bridging the two pads.
+	b.Traces = []Trace{{ID: "t-bridge", NetID: "", Layer: "top", Width: 500_000,
+		Points: []Point{pt(10, 25), pt(25, 25), pt(25, 30), pt(40, 30), pt(40, 25)}}}
+	errs := CheckBoard(b)
+	shorts := errorsOf(errs, "short")
+	if len(shorts) != 1 {
+		t.Fatalf("un-netted trace bridging two nets must be a short, got %v", errs)
+	}
+	s := shorts[0]
+	if len(s.Nets) != 2 {
+		t.Fatalf("short should name both nets, got %+v", s)
+	}
+	joined := s.Elements
+	has := func(id string) bool {
+		for _, e := range joined {
+			if e == id {
+				return true
+			}
+		}
+		return false
+	}
+	if !has("p1") || !has("p2") || !has("t-bridge") {
+		t.Fatalf("short path should include both pads and the bridge trace, got %v", joined)
+	}
+	// Location must sit on the bridge, between the pads.
+	if s.X < 9*mm || s.X > 41*mm || s.Y < 24*mm || s.Y > 31*mm {
+		t.Fatalf("short location should be on the connecting path, got (%.3f,%.3f)mm",
+			s.X/1e6, s.Y/1e6)
+	}
+	// Assigning the bridge to either net keeps the short (now direct).
+	b.Traces[0].NetID = "n1"
+	if shorts := errorsOf(CheckBoard(b), "short"); len(shorts) != 1 {
+		t.Fatalf("bridge on n1 still shorts to n2, got %v", CheckBoard(b))
+	}
+	// Assigning both sides the same net clears the short.
+	b.Pads[1].NetID = "n1"
+	b.Traces[0].NetID = "n1"
+	if errs := CheckBoard(b); len(errs) != 0 {
+		t.Fatalf("single net should be clean, got %v", errs)
+	}
+}
+
+// A short path may span layers: pad(n1) - top trace - via - bottom
+// trace - pad(n2). The via and traces have no net of their own; the
+// short must still be reported with the full cross-layer path.
+func TestShortAcrossLayersThroughVia(t *testing.T) {
+	b := baseBoard()
+	b.Pads = []Pad{
+		{ID: "p1", NetID: "n1", Layer: "top", Shape: "circle",
+			X: 5 * mm, Y: 25 * mm, Diameter: 2 * mm},
+		{ID: "p2", NetID: "n2", Layer: "bottom", Shape: "circle",
+			X: 45 * mm, Y: 25 * mm, Diameter: 2 * mm},
+	}
+	b.Traces = []Trace{
+		{ID: "t-top", NetID: "", Layer: "top", Width: 500_000,
+			Points: []Point{pt(5, 25), pt(25, 25)}},
+		{ID: "t-bot", NetID: "", Layer: "bottom", Width: 500_000,
+			Points: []Point{pt(25, 25), pt(45, 25)}},
+	}
+	b.Vias = []Via{{ID: "v1", NetID: "", X: 25 * mm, Y: 25 * mm,
+		Diameter: 1_200_000, Layers: []string{"top", "bottom"}}}
+	errs := CheckBoard(b)
+	shorts := errorsOf(errs, "short")
+	if len(shorts) != 1 {
+		t.Fatalf("cross-layer bridge through via must be a short, got %v", errs)
+	}
+	s := shorts[0]
+	for _, id := range []string{"p1", "p2", "v1"} {
+		found := false
+		for _, e := range s.Elements {
+			if e == id {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("short path should include %s, got %v", id, s.Elements)
+		}
+	}
+	// Via declared only on top: bottom trace dangling, no short.
+	b.Vias[0].Layers = []string{"top"}
+	if shorts := errorsOf(CheckBoard(b), "short"); len(shorts) != 0 {
+		t.Fatalf("via not on bottom must break the bridge, got %v", shorts)
+	}
+}
+
 // Through-hole pad exists on every layer.
 func TestThroughPadSpansLayers(t *testing.T) {
 	b := baseBoard()

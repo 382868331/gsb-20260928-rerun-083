@@ -23,6 +23,13 @@ export default function Canvas() {
     return { x: (e.clientX - r.left - s.view.panX) / k, y: (e.clientY - r.top - s.view.panY) / k }
   }
 
+  // Board geometry is integer nanometers; the save format rejects
+  // fractional coordinates, so snap every edited point to whole nm.
+  const toBoardInt = (e: { clientX: number; clientY: number }): Point => {
+    const p = toBoard(e)
+    return { x: Math.round(p.x), y: Math.round(p.y) }
+  }
+
   // Keyboard: undo/redo, delete, escape, enter.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -84,21 +91,23 @@ export default function Canvas() {
       return
     }
     if (e.button !== 0 || !b) return
-    const p = toBoard(e)
     if (s.tool === 'trace' || s.tool === 'outline') {
+      const p = toBoardInt(e)
       s.set({ draft: [...s.draft, p] })
     } else if (s.tool === 'pad') {
+      const p = toBoardInt(e)
       s.commit((bb) => {
         bb.pads.push({
           id: uid('pad'), netId: s.netId, layer: s.layer, shape: s.padShape,
-          x: Math.round(p.x), y: Math.round(p.y),
+          x: p.x, y: p.y,
           diameter: s.padSize, w: s.padSize, h: s.padSize * 0.7, drill: 0,
         })
       })
     } else if (s.tool === 'via') {
+      const p = toBoardInt(e)
       s.commit((bb) => {
         bb.vias.push({
-          id: uid('via'), netId: s.netId, x: Math.round(p.x), y: Math.round(p.y),
+          id: uid('via'), netId: s.netId, x: p.x, y: p.y,
           diameter: 1.2 * MM, drill: 0.6 * MM, layers: [...s.viaLayers],
         })
       })
@@ -127,12 +136,12 @@ export default function Canvas() {
       const sel = s.selected
       const nb: Board = JSON.parse(JSON.stringify(d.snap))
       if (sel.kind === 'pad') {
-        const p = nb.pads.find((x) => x.id === sel.id); if (p) { p.x += dx; p.y += dy }
+        const p = nb.pads.find((x) => x.id === sel.id); if (p) { p.x = Math.round(p.x + dx); p.y = Math.round(p.y + dy) }
       } else if (sel.kind === 'via') {
-        const v = nb.vias.find((x) => x.id === sel.id); if (v) { v.x += dx; v.y += dy }
+        const v = nb.vias.find((x) => x.id === sel.id); if (v) { v.x = Math.round(v.x + dx); v.y = Math.round(v.y + dy) }
       } else {
         const t = nb.traces.find((x) => x.id === sel.id)
-        if (t) t.points = t.points.map((p) => ({ x: p.x + dx, y: p.y + dy }))
+        if (t) t.points = t.points.map((p) => ({ x: Math.round(p.x + dx), y: Math.round(p.y + dy) }))
       }
       s.set({ board: nb })
     }

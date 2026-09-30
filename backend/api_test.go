@@ -98,3 +98,70 @@ func TestAPIRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+// Save -> reload -> check: a board where an un-netted trace/via chain
+// bridges two nets must report a located short after a full
+// persistence round trip, with geometry intact (integer nm).
+func TestSaveReloadShortThroughUnnettedCopper(t *testing.T) {
+	s := newTestServer(t)
+
+	b := baseBoard()
+	b.Pads = []Pad{
+		{ID: "p1", NetID: "n1", Layer: "top", Shape: "circle",
+			X: 10 * mm, Y: 25 * mm, Diameter: 2 * mm},
+		{ID: "p2", NetID: "n2", Layer: "bottom", Shape: "circle",
+			X: 45 * mm, Y: 25 * mm, Diameter: 2 * mm},
+	}
+	b.Traces = []Trace{
+		{ID: "t1", NetID: "", Layer: "top", Width: 500_000,
+			Points: []Point{pt(10, 25), pt(25, 25), pt(25, 20)}},
+		{ID: "t2", NetID: "", Layer: "bottom", Width: 500_000,
+			Points: []Point{pt(25, 20), pt(45, 20), pt(45, 25)}},
+	}
+	b.Vias = []Via{{ID: "v1", NetID: "", X: 25 * mm, Y: 20 * mm,
+		Diameter: 1_200_000, Layers: []string{"top", "bottom"}}}
+
+	data, _ := json.Marshal(b)
+	r := httptest.NewRequest("PUT", "/api/board", bytes.NewReader(data))
+	w := httptest.NewRecorder()
+	s.putBoard(w, r)
+	if w.Code != 200 {
+		t.Fatalf("save failed: %s", w.Body.String())
+	}
+
+	// Reload from disk: geometry must survive the round trip exactly.
+	loaded, err := s.st.load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.Traces) != 2 || loaded.Traces[0].Points[1] != (Point{25 * mm, 25 * mm}) {
+		t.Fatalf("geometry changed after save/reload: %+v", loaded.Traces)
+	}
+
+	errs := CheckBoard(loaded)
+	var shorts []CheckError
+	for _, e := range errs {
+		if e.Type == "short" {
+			shorts = append(shorts, e)
+		}
+	}
+	if len(shorts) != 1 {
+		t.Fatalf("expected 1 short after reload, got %v", errs)
+	}
+	s0 := shorts[0]
+	if len(s0.Nets) != 2 || len(s0.Elements) < 4 {
+		t.Fatalf("short should name both nets and the full path, got %+v", s0)
+	}
+	if s0.X < 9*mm || s0.X > 46*mm || s0.Y < 19*mm || s0.Y > 26*mm {
+		t.Fatalf("short location off the bridge: (%.3f,%.3f)mm", s0.X/1e6, s0.Y/1e6)
+	}
+
+	// Fractional coordinates must be rejected, not silently truncated.
+	r = httptest.NewRequest("PUT", "/api/board",
+		bytes.NewReader([]byte(`{"id":"b","pads":[{"id":"p","x":1.5,"y":0}]}`)))
+	w = httptest.NewRecorder()
+	s.putBoard(w, r)
+	if w.Code != 400 {
+		t.Fatalf("fractional nm should be rejected with 400, got %d", w.Code)
+	}
+}
