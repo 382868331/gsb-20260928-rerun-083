@@ -228,6 +228,89 @@ func TestDemoBoardValidation(t *testing.T) {
 	}
 }
 
+// A netless trace physically bridging two pads of different nets is a
+// short: unconnected copper still conducts. The report must name the
+// bridging objects and locate the path.
+func TestNetlessCopperBridgeIsShort(t *testing.T) {
+	b := baseBoard()
+	b.Pads = []Pad{
+		{ID: "p1", NetID: "n1", Layer: "top", Shape: "circle", X: 10 * mm, Y: 25 * mm, Diameter: 2 * mm},
+		{ID: "p2", NetID: "n2", Layer: "top", Shape: "circle", X: 40 * mm, Y: 25 * mm, Diameter: 2 * mm},
+	}
+	b.Traces = []Trace{{ID: "t-float", NetID: "", Layer: "top", Width: 500_000,
+		Points: []Point{pt(10, 25), pt(40, 25)}}}
+	errs := CheckBoard(b)
+	shorts := errorsOf(errs, "short")
+	if len(shorts) != 1 {
+		t.Fatalf("netless trace bridging two nets must be a short, got %v", errs)
+	}
+	s := shorts[0]
+	if len(s.Nets) != 2 {
+		t.Fatalf("short should name both nets, got %v", s.Nets)
+	}
+	found := false
+	for _, e := range s.Elements {
+		if e == "t-float" {
+			found = true
+		}
+	}
+	if !found || len(s.Elements) != 3 {
+		t.Fatalf("short path should include both pads and the netless trace, got %v", s.Elements)
+	}
+	// Path spans from the p1 contact to the p2 contact.
+	if s.X < 10*mm || s.X2 > 40*mm {
+		t.Fatalf("short location should span the bridge, got (%v,%v)->(%v,%v)", s.X, s.Y, s.X2, s.Y2)
+	}
+}
+
+// Netless copper touching only one net (or nothing) is not a short.
+func TestNetlessCopperAloneIsClean(t *testing.T) {
+	b := baseBoard()
+	b.Pads = []Pad{{ID: "p1", NetID: "n1", Layer: "top", Shape: "circle", X: 10 * mm, Y: 25 * mm, Diameter: 2 * mm}}
+	b.Traces = []Trace{
+		{ID: "t1", NetID: "", Layer: "top", Width: 500_000, Points: []Point{pt(10, 25), pt(20, 25)}},
+		{ID: "t2", NetID: "", Layer: "top", Width: 500_000, Points: []Point{pt(30, 30), pt(40, 30)}},
+	}
+	if errs := CheckBoard(b); len(errs) != 0 {
+		t.Fatalf("netless copper without two nets must be clean, got %v", errs)
+	}
+}
+
+// A short path running through a multi-segment netless trace and a via
+// across layers must be detected and localized with every hop.
+func TestShortPathThroughViaAndSegments(t *testing.T) {
+	b := baseBoard()
+	b.Pads = []Pad{
+		{ID: "p1", NetID: "n1", Layer: "top", Shape: "circle", X: 5 * mm, Y: 25 * mm, Diameter: 2 * mm},
+		{ID: "p2", NetID: "n2", Layer: "bottom", Shape: "circle", X: 45 * mm, Y: 25 * mm, Diameter: 2 * mm},
+	}
+	b.Traces = []Trace{
+		{ID: "t-top", NetID: "", Layer: "top", Width: 500_000,
+			Points: []Point{pt(5, 25), pt(15, 25), pt(25, 25)}},
+		{ID: "t-bot", NetID: "", Layer: "bottom", Width: 500_000,
+			Points: []Point{pt(25, 25), pt(45, 25)}},
+	}
+	if errs := CheckBoard(b); len(errorsOf(errs, "short")) != 0 {
+		t.Fatalf("without the via the layers are disjoint, expected no short, got %v", errs)
+	}
+	b.Vias = []Via{{ID: "v1", NetID: "", X: 25 * mm, Y: 25 * mm, Diameter: 1_200_000, Layers: []string{"top", "bottom"}}}
+	errs := CheckBoard(b)
+	shorts := errorsOf(errs, "short")
+	if len(shorts) != 1 {
+		t.Fatalf("via + netless traces bridging two nets must be one short, got %v", errs)
+	}
+	s := shorts[0]
+	want := map[string]bool{"p1": true, "t-top": true, "v1": true, "t-bot": true, "p2": true}
+	if len(s.Elements) != len(want) {
+		t.Fatalf("path should include all 5 objects, got %v", s.Elements)
+	}
+	for _, e := range s.Elements {
+		if !want[e] {
+			t.Fatalf("unexpected element %q in short path %v", e, s.Elements)
+		}
+	}
+}
+
 // Zoom independence: checks run purely in board coordinates. Scaling the
 // whole board geometry (what a view zoom would visually do) must not
 // change the open/short verdict structure.

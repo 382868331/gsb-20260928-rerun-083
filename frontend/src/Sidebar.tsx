@@ -107,6 +107,7 @@ export default function Sidebar() {
         </label>
         <label>网络
           <select value={s.netId} onChange={(e) => s.set({ netId: e.target.value })}>
+            <option value=''>(无网络)</option>
             {b.nets.map((n) => <option key={n.id} value={n.id}>{n.name}</option>)}
           </select>
         </label>
@@ -146,6 +147,7 @@ export default function Sidebar() {
                   : bb.vias.find((x) => x.id === sel.id)
                 if (it) it.netId = e.target.value
               })}>
+              <option value=''>(无网络)</option>
               {b.nets.map((n) => <option key={n.id} value={n.id}>{n.name}</option>)}
             </select>
           </label>

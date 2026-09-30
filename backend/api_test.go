@@ -98,3 +98,45 @@ func TestAPIRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+// A mouse-drawn trace lands on arbitrary integer-nm coordinates; the
+// save -> reload round trip must preserve its geometry and the check
+// verdicts exactly.
+func TestSaveReloadPreservesDrawnGeometry(t *testing.T) {
+	s := newTestServer(t)
+	var b Board
+	body, _ := json.Marshal(s.board)
+	json.Unmarshal(body, &b)
+	b.Traces = append(b.Traces, Trace{ID: "trace-drawn", NetID: "net-gnd",
+		Layer: "top", Width: 500_000,
+		Points: []Point{{X: 12_345_678, Y: 9_876_543}, {X: 33_333_333, Y: 11_111_111}, {X: 44_444_444, Y: 22_222_222}}})
+	data, _ := json.Marshal(&b)
+	r := httptest.NewRequest("PUT", "/api/board", bytes.NewReader(data))
+	w := httptest.NewRecorder()
+	s.putBoard(w, r)
+	if w.Code != 200 {
+		t.Fatalf("save of drawn trace failed: %s", w.Body.String())
+	}
+	loaded, err := s.st.load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got *Trace
+	for i := range loaded.Traces {
+		if loaded.Traces[i].ID == "trace-drawn" {
+			got = &loaded.Traces[i]
+		}
+	}
+	if got == nil {
+		t.Fatal("drawn trace lost after reload")
+	}
+	for i, p := range got.Points {
+		if p != b.Traces[len(b.Traces)-1].Points[i] {
+			t.Fatalf("point %d changed across save/reload: %v != %v", i, p, b.Traces[len(b.Traces)-1].Points[i])
+		}
+	}
+	e1, e2 := CheckBoard(&b), CheckBoard(loaded)
+	if len(e1) != len(e2) {
+		t.Fatalf("check verdicts differ after reload: %d vs %d", len(e1), len(e2))
+	}
+}

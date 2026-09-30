@@ -57,6 +57,13 @@ func buildShapes(b *Board) []copperShape {
 	return out
 }
 
+// edge is one physical contact between two elements, located at a
+// board-space point.
+type edge struct {
+	to string
+	at fpt
+}
+
 type unionFind struct{ parent map[string]string }
 
 func newUF() *unionFind { return &unionFind{map[string]string{}} }
@@ -129,28 +136,68 @@ func CheckBoard(b *Board) []CheckError {
 
 	var errs []CheckError
 
-	// Shorts: physical contact between copper of two different nets.
-	seenShort := map[string]bool{}
+	// Contact graph between elements (edges carry the contact point),
+	// used to localize shorts along the actual copper path.
+	adj := map[string][]edge{}
 	for _, c := range contacts {
-		na, nb := c.a.netID, c.b.netID
-		if na == "" || nb == "" || na == nb {
+		adj[c.a.elemID] = append(adj[c.a.elemID], edge{c.b.elemID, c.at})
+		adj[c.b.elemID] = append(adj[c.b.elemID], edge{c.a.elemID, c.at})
+	}
+
+	// Group elements into physical connectivity components. Netless
+	// copper (netId == "") still conducts, so it is part of a component
+	// and can bridge two nets.
+	compElems := map[string][]string{}
+	for id := range elemNet {
+		root := uf.find(id)
+		compElems[root] = append(compElems[root], id)
+	}
+	roots := make([]string, 0, len(compElems))
+	for r := range compElems {
+		roots = append(roots, r)
+	}
+	sort.Strings(roots)
+
+	// Shorts: one physical component carrying two or more different
+	// nets, no matter whether the nets touch directly or through
+	// netless copper / vias / multi-segment traces.
+	for _, root := range roots {
+		elems := compElems[root]
+		netSet := map[string]bool{}
+		for _, e := range elems {
+			if n := elemNet[e]; n != "" {
+				netSet[n] = true
+			}
+		}
+		if len(netSet) < 2 {
 			continue
 		}
-		key := na + "|" + nb
-		if na > nb {
-			key = nb + "|" + na
+		nets := make([]string, 0, len(netSet))
+		for n := range netSet {
+			nets = append(nets, n)
 		}
-		if seenShort[key] {
-			continue
+		sort.Strings(nets)
+		path, pts := shortPath(elems, elemNet, adj, nets[0], nets[1])
+		if len(path) == 0 {
+			path = elems
+			pts = []fpt{{}, {}}
 		}
-		seenShort[key] = true
+		first, last := pts[0], pts[len(pts)-1]
+		var msg string
+		if len(path) <= 2 {
+			msg = fmt.Sprintf("短路: 网络 %s 与 %s 在 (%.3f, %.3f) mm 处接触",
+				b.netName(nets[0]), b.netName(nets[1]), first.x/1e6, first.y/1e6)
+		} else {
+			msg = fmt.Sprintf("短路: 网络 %s 与 %s 经 %d 个元件连通, 路径从 (%.3f, %.3f) 到 (%.3f, %.3f) mm",
+				b.netName(nets[0]), b.netName(nets[1]), len(path),
+				first.x/1e6, first.y/1e6, last.x/1e6, last.y/1e6)
+		}
 		errs = append(errs, CheckError{
-			Type: "short",
-			Message: fmt.Sprintf("短路: 网络 %s 与 %s 在 (%.3f, %.3f) mm 处接触",
-				b.netName(na), b.netName(nb), c.at.x/1e6, c.at.y/1e6),
-			Nets:     []string{na, nb},
-			Elements: []string{c.a.elemID, c.b.elemID},
-			X:        c.at.x, Y: c.at.y, X2: c.at.x, Y2: c.at.y,
+			Type:     "short",
+			Message:  msg,
+			Nets:     nets,
+			Elements: path,
+			X:        first.x, Y: first.y, X2: last.x, Y2: last.y,
 		})
 	}
 
@@ -198,6 +245,60 @@ func CheckBoard(b *Board) []CheckError {
 		}
 	}
 	return errs
+}
+
+// shortPath finds the shortest element chain (BFS over the contact
+// graph) physically connecting netA to netB inside one component, and
+// returns the element ids in order plus the contact point of each hop.
+// Netless copper along the way is included, which is what lets the UI
+// show exactly which objects bridge the two nets.
+func shortPath(elems []string, elemNet map[string]string, adj map[string][]edge, netA, netB string) ([]string, []fpt) {
+	inComp := toSet(elems)
+	type prev struct {
+		from string
+		at   fpt
+	}
+	came := map[string]prev{}
+	seen := map[string]bool{}
+	var queue []string
+	for _, e := range elems {
+		if elemNet[e] == netA {
+			seen[e] = true
+			queue = append(queue, e)
+		}
+	}
+	var end string
+	for len(queue) > 0 && end == "" {
+		cur := queue[0]
+		queue = queue[1:]
+		if elemNet[cur] == netB {
+			end = cur
+			break
+		}
+		for _, ed := range adj[cur] {
+			if seen[ed.to] || !inComp[ed.to] {
+				continue
+			}
+			seen[ed.to] = true
+			came[ed.to] = prev{cur, ed.at}
+			queue = append(queue, ed.to)
+		}
+	}
+	if end == "" {
+		return nil, nil
+	}
+	var path []string
+	var pts []fpt
+	for cur := end; ; {
+		path = append([]string{cur}, path...)
+		p, ok := came[cur]
+		if !ok {
+			break
+		}
+		pts = append([]fpt{p.at}, pts...)
+		cur = p.from
+	}
+	return path, pts
 }
 
 func toSet(ids []string) map[string]bool {
