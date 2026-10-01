@@ -18,6 +18,48 @@ func newTestServer(t *testing.T) *server {
 	return &server{st: st, board: b}
 }
 
+// The check endpoint returns per-net connectivity status alongside the
+// located errors, so the UI can re-verify immediately after a local move
+// or via deletion and explain which nets opened, shorted or stayed live.
+func TestAPICheckReturnsNetStatusAndSteps(t *testing.T) {
+	s := newTestServer(t)
+	body, _ := json.Marshal(s.board)
+	r := httptest.NewRequest("POST", "/api/board/check", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	s.checkBoard(w, r)
+	if w.Code != 200 {
+		t.Fatalf("check failed: %s", w.Body.String())
+	}
+	var res struct {
+		Errors    []CheckError `json:"errors"`
+		NetStatus []NetStatus  `json:"netStatus"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]NetStatus{}
+	for _, n := range res.NetStatus {
+		byID[n.NetID] = n
+	}
+	if st := byID["net-vcc"]; st.State != "connected" {
+		t.Fatalf("VCC (through pad only) should be connected, got %+v", st)
+	}
+	if st := byID["net-sig"]; st.State != "open" || st.Components != 2 {
+		t.Fatalf("SIG is split across layers without a via on the crossing, got %+v", st)
+	}
+	// Every located error must carry a segment-by-segment explanation.
+	for _, e := range res.Errors {
+		if len(e.Steps) < 2 {
+			t.Fatalf("error %q must explain at least two path segments, got %+v", e.Message, e.Steps)
+		}
+		for _, st := range e.Steps {
+			if st.Kind == "element" && st.ID == "" {
+				t.Fatalf("element step missing id: %+v", st)
+			}
+		}
+	}
+}
+
 // Save -> check -> export -> import round trip over the HTTP handlers,
 // verifying persistence and element identity preservation.
 func TestAPIRoundTrip(t *testing.T) {

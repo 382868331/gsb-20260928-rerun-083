@@ -19,7 +19,25 @@ export interface Board {
 export interface CheckError {
   type: 'open' | 'short'; message: string
   nets: string[]; elements: string[]
+  steps?: PathStep[]
   x: number; y: number; x2: number; y2: number
 }
+export interface PathStep {
+  kind: 'element' | 'hop'
+  id: string
+  netId: string
+  netName: string
+  layer: string
+  x: number; y: number
+}
+export interface NetStatus {
+  netId: string
+  netName: string
+  state: 'connected' | 'open' | 'short'
+  components: number
+  shortedWith: string[]
+  elements: string[]
+}
+export interface CheckReport { errors: CheckError[]; netStatus: NetStatus[] }
 export type Tool = 'select' | 'trace' | 'pad' | 'via' | 'outline'
 export interface Sel { kind: 'pad' | 'trace' | 'via'; id: string }

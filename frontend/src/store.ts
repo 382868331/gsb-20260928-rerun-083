@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Board, CheckError, Point, Sel, Tool } from './types'
+import type { Board, CheckError, NetStatus, Point, Sel, Tool } from './types'
 
 export const MM = 1_000_000
 
@@ -22,8 +22,11 @@ interface State {
   selected: Sel | null
   draft: Point[]
   errors: CheckError[]
+  netStatus: NetStatus[]
+  lastStatus: NetStatus[]
   status: string
   view: { zoom: number; panX: number; panY: number }
+  pathError: CheckError | null
 
   setBoard: (b: Board) => void
   setTool: (t: Tool) => void
@@ -32,6 +35,7 @@ interface State {
   undo: () => void
   redo: () => void
   setView: (v: { zoom: number; panX: number; panY: number }) => void
+  setReport: (r: { errors: CheckError[]; netStatus: NetStatus[] }, remember: boolean) => void
 }
 
 export const useStore = create<State>((set, get) => ({
@@ -48,7 +52,10 @@ export const useStore = create<State>((set, get) => ({
   selected: null,
   draft: [],
   errors: [],
+  netStatus: [],
+  lastStatus: [],
   status: '',
+  pathError: null,
   view: { zoom: 1, panX: 60, panY: 40 },
 
   setBoard: (b) =>
@@ -57,6 +64,9 @@ export const useStore = create<State>((set, get) => ({
       past: [],
       future: [],
       errors: [],
+      netStatus: [],
+      lastStatus: [],
+      pathError: null,
       selected: null,
       draft: [],
       netId: b.nets[0]?.id ?? '',
@@ -70,7 +80,7 @@ export const useStore = create<State>((set, get) => ({
     if (!board) return
     const next = clone(board)
     fn(next)
-    set({ board: next, past: [...past, board], future: [], errors: [] })
+    set({ board: next, past: [...past, board], future: [], errors: [], pathError: null })
   },
   undo: () => {
     const { board, past, future } = get()
@@ -79,7 +89,7 @@ export const useStore = create<State>((set, get) => ({
       board: past[past.length - 1],
       past: past.slice(0, -1),
       future: [board, ...future],
-      errors: [],
+      errors: [], pathError: null,
       selected: null,
       draft: [],
     })
@@ -91,10 +101,19 @@ export const useStore = create<State>((set, get) => ({
       board: future[0],
       past: [...past, board],
       future: future.slice(1),
-      errors: [],
+      errors: [], pathError: null,
       selected: null,
       draft: [],
     })
   },
   setView: (v) => set({ view: v }),
+  // remember=true snapshots the previous per-net state so the sidebar can
+  // show which nets just broke / shorted / recovered after a local edit.
+  setReport: (r, remember) =>
+    set((st) => ({
+      errors: r.errors,
+      netStatus: r.netStatus,
+      lastStatus: remember ? st.netStatus : st.lastStatus,
+      pathError: null,
+    })),
 }))

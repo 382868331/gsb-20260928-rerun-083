@@ -152,7 +152,7 @@ export default function Canvas() {
     if (d?.kind === 'move' && d.snap && s.board) {
       // Commit the move as one undoable step.
       const cur = s.board
-      useStore.setState({ past: [...s.past, d.snap], future: [], errors: [], board: cur })
+      useStore.setState({ past: [...s.past, d.snap], future: [], errors: [], pathError: null, board: cur })
     }
     drag.current = null
   }
@@ -234,6 +234,24 @@ export default function Canvas() {
                 fill={er.type === 'short' ? '#ff1744' : '#ff9100'} />
             </g>
           ))}
+          {s.pathError?.steps && (
+            <g pointerEvents="none">
+              {s.pathError.steps.filter((st) => st.kind === 'hop').map((st, i) => (
+                <circle key={'hop' + i} cx={st.x} cy={st.y} r={0.45 * MM}
+                  fill="#ffd400" stroke="#5a4500" strokeWidth={0.08 * MM} />
+              ))}
+              {s.pathError.steps.filter((st) => st.kind === 'element').map((st, i, arr) => (
+                <g key={'el' + i}>
+                  {i > 0 && (
+                    <line x1={arr[i - 1].x} y1={arr[i - 1].y} x2={st.x} y2={st.y}
+                      stroke="#ffd400" strokeWidth={0.12 * MM} strokeDasharray={`${0.6 * MM} ${0.3 * MM}`} />
+                  )}
+                  <circle cx={st.x} cy={st.y} r={0.6 * MM} fill="rgba(255,212,0,0.25)"
+                    stroke="#ffd400" strokeWidth={0.12 * MM} />
+                </g>
+              ))}
+            </g>
+          )}
         </g>
       </svg>
       <div className="cursor-readout">

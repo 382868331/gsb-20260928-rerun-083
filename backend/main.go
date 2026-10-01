@@ -50,7 +50,8 @@ func (s *server) checkBoard(w http.ResponseWriter, r *http.Request) {
 		}
 		b = &posted
 	}
-	writeJSON(w, 200, map[string]any{"errors": CheckBoard(b)})
+	rp := AnalyzeBoard(b)
+	writeJSON(w, 200, map[string]any{"errors": rp.Errors, "netStatus": rp.NetStatus})
 }
 
 func (s *server) exportBoard(w http.ResponseWriter, r *http.Request) {

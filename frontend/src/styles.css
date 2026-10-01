@@ -23,6 +23,15 @@ input[type=number] { width: 90px; }
 .err.short { border-color: #ff1744; }
 .err.open { border-color: #ff9100; }
 .err:hover { background: #34383f; }
+.netst { padding: 3px 8px; margin: 3px 0; border-radius: 3px; background: #2a2d34; border-left: 3px solid #555; }
+.netst.connected { border-color: #3da06b; }
+.netst.open { border-color: #ff9100; }
+.netst.short { border-color: #ff1744; }
+.steps { margin: 4px 0 4px 14px; padding: 0; list-style: decimal; }
+.steps li { font-size: 11px; color: #ccd; cursor: pointer; margin: 1px 0; }
+.steps li.hop { list-style: none; margin-left: -10px; color: #e8c44a; }
+.steps li:hover { color: #fff; }
+.linkbtn { margin: 2px 0 4px; padding: 2px 8px; font-size: 11px; }
 .canvas { flex: 1; position: relative; overflow: hidden; }
 .canvas svg { width: 100%; height: 100%; display: block; background: #14161a; touch-action: none; }
 .canvas.loading { display: flex; align-items: center; justify-content: center; }

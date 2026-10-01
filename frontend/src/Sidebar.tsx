@@ -1,7 +1,7 @@
-import { useRef } from 'react'
+import { useEffect, useRef } from 'react'
 import { api } from './api'
 import { MM, uid, useStore } from './store'
-import type { Tool } from './types'
+import type { CheckReport, NetStatus, Tool } from './types'
 
 const TOOLS: { id: Tool; label: string }[] = [
   { id: 'select', label: '选择/移动' },
@@ -23,15 +23,28 @@ export default function Sidebar() {
   }
 
   const save = () => run(async () => { const nb = await api.saveBoard(b); useStore.setState({ board: nb }) }, '已保存 (修订 ' + (b.revision + 1) + ')')
-  const check = () => run(async () => {
-    const r = await api.checkBoard(b)
-    s.set({ errors: r.errors })
-  }, '')
-  const doCheck = async () => {
-    await check()
-    const n = useStore.getState().errors.length
-    s.set({ status: n === 0 ? '检查通过: 无开路/短路' : `发现 ${n} 个问题` })
+  const doCheck = async (remember = false) => {
+    try {
+      const r: CheckReport = await api.checkBoard(b)
+      s.setReport(r, remember)
+      const n = r.errors.length
+      s.set({ status: n === 0 ? '即时复核: 无开路/短路' : `即时复核: 发现 ${n} 个问题` })
+    } catch (e) {
+      s.set({ status: '复核失败: ' + (e as Error).message })
+    }
   }
+
+  // Instant re-verification after every local edit (place/move/delete,
+  // undo/redo, layer or net change). Board coordinates are integer nm and
+  // checks are geometry-only, so zoom level never affects the verdict.
+  const firstRun = useRef(true)
+  useEffect(() => {
+    if (!b) return
+    if (firstRun.current) { firstRun.current = false; return }
+    const h = setTimeout(() => { doCheck(true) }, 200)
+    return () => clearTimeout(h)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [b])
   const exportJson = () => {
     const blob = new Blob([JSON.stringify(b, null, 2)], { type: 'application/json' })
     const a = document.createElement('a')
@@ -52,6 +65,20 @@ export default function Sidebar() {
     const zoom = Math.max(s.view.zoom, 4)
     const k = (30 / MM) * zoom
     s.setView({ zoom, panX: window.innerWidth * 0.35 - x * k, panY: window.innerHeight / 2 - y * k })
+  }
+
+  // Diff the latest per-net states against those remembered before the
+  // last edit: surfaces exactly which nets opened, shorted or recovered.
+  const stateLabel: Record<string, string> = { connected: '连通', open: '开路', short: '短路' }
+  const prevMap = new Map(s.lastStatus.map((n) => [n.netId, n.state]))
+  const transitionOf = (n: NetStatus): string => {
+    const prev = prevMap.get(n.netId)
+    if (!prev || prev === n.state) return ''
+    const dir =
+      n.state === 'connected' ? '已恢复连通'
+      : n.state === 'short' ? '新发生短路'
+      : '已断开'
+    return ` (${stateLabel[prev] ?? prev} → ${stateLabel[n.state] ?? n.state}, ${dir})`
   }
 
   const sel = s.selected
@@ -76,7 +103,7 @@ export default function Sidebar() {
           <button onClick={s.redo} disabled={!s.future.length}>重做</button>
         </div>
         <div className="row">
-          <button className="primary" onClick={doCheck}>检查连通/短路</button>
+          <button className="primary" onClick={() => doCheck()}>检查连通/短路</button>
         </div>
         <div className="row">
           <button onClick={exportJson}>导出</button>
@@ -107,6 +134,7 @@ export default function Sidebar() {
         </label>
         <label>网络
           <select value={s.netId} onChange={(e) => s.set({ netId: e.target.value })}>
+            <option value="">(未命名铜皮)</option>
             {b.nets.map((n) => <option key={n.id} value={n.id}>{n.name}</option>)}
           </select>
         </label>
@@ -146,6 +174,7 @@ export default function Sidebar() {
                   : bb.vias.find((x) => x.id === sel.id)
                 if (it) it.netId = e.target.value
               })}>
+              <option value="">(未命名铜皮)</option>
               {b.nets.map((n) => <option key={n.id} value={n.id}>{n.name}</option>)}
             </select>
           </label>
@@ -184,13 +213,45 @@ export default function Sidebar() {
         </div>
       )}
 
+      {s.netStatus.length > 0 && (
+        <div className="group">
+          <h2>网络连通复核 ({s.netStatus.length})</h2>
+          {s.netStatus.map((n) => (
+            <div key={n.netId} className={'netst ' + n.state}>
+              <b>{n.netName}</b>: {stateLabel[n.state] ?? n.state}
+              {n.state === 'short' && <> · 与 {n.shortedWith.map((id) => b.nets.find((x) => x.id === id)?.name ?? id).join(', ')} 短接</>}
+              {n.state === 'open' && <> · {n.components} 个独立铜皮域</>}
+              <span className="small">{transitionOf(n)}</span>
+            </div>
+          ))}
+          <div className="row small">移动/删除过孔或铜线后自动复核; 仅在存在有效跨层连接(过孔/通孔焊盘)时不同层才导通</div>
+        </div>
+      )}
+
       <div className="group">
-        <h2>检查结果 ({s.errors.length})</h2>
+        <h2>故障路径 ({s.errors.length})</h2>
         {s.errors.length === 0 && <div className="row small">无问题, 或尚未运行检查</div>}
         {s.errors.map((er, i) => (
-          <div key={i} className={'err ' + er.type} onClick={() => focusError((er.x + er.x2) / 2, (er.y + er.y2) / 2)}>
-            <b>{er.type === 'short' ? '短路' : '开路'}</b> {er.message}
-            <div className="small">位置 ({(er.x / MM).toFixed(3)}, {(er.y / MM).toFixed(3)}) mm · 元件: {er.elements.join(', ')}</div>
+          <div key={i} className={'err ' + er.type}>
+            <div onClick={() => focusError((er.x + er.x2) / 2, (er.y + er.y2) / 2)}>
+              <b>{er.type === 'short' ? '短路' : '开路'}</b> {er.message}
+            </div>
+            {er.steps && er.steps.length > 0 && (
+              <ol className="steps">
+                {er.steps.map((st, j) => (
+                  <li key={j} className={st.kind} onClick={() => focusError(st.x, st.y)}>
+                    {st.kind === 'element' ? (
+                      <>{j === 0 ? '' : '└ '}<b>{st.id}</b> [{st.netName}] @ {st.layer} <span className="small">({(st.x / MM).toFixed(2)}, {(st.y / MM).toFixed(2)}) mm</span></>
+                    ) : (
+                      <span className="hop">↳ {st.layer} 层接触/间隙 @ ({(st.x / MM).toFixed(2)}, {(st.y / MM).toFixed(2)}) mm</span>
+                    )}
+                  </li>
+                ))}
+              </ol>
+            )}
+            <button className="linkbtn" onClick={() => s.set({ pathError: s.pathError === er ? null : er })}>
+              {s.pathError === er ? '隐藏画布路径' : '在画布高亮完整导电路径'}
+            </button>
           </div>
         ))}
       </div>
