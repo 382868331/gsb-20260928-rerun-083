@@ -366,3 +366,113 @@ func TestZoomIndependence(t *testing.T) {
 		}
 	}
 }
+
+// A short through multiple vias and un-netted copper must be
+// explainable segment by segment: every hop names both elements, the
+// layer, and the contact location, never just two net names.
+func TestShortPathExplainedSegmentBySegment(t *testing.T) {
+	b := baseBoard()
+	b.Pads = []Pad{
+		{ID: "p1", NetID: "n1", Layer: "top", Shape: "circle",
+			X: 5 * mm, Y: 25 * mm, Diameter: 2 * mm},
+		{ID: "p2", NetID: "n2", Layer: "top", Shape: "circle",
+			X: 45 * mm, Y: 25 * mm, Diameter: 2 * mm},
+	}
+	b.Traces = []Trace{
+		{ID: "t1", NetID: "", Layer: "top", Width: 500_000,
+			Points: []Point{pt(5, 25), pt(15, 25)}},
+		{ID: "t2", NetID: "", Layer: "bottom", Width: 500_000,
+			Points: []Point{pt(15, 25), pt(35, 25)}},
+		{ID: "t3", NetID: "", Layer: "top", Width: 500_000,
+			Points: []Point{pt(35, 25), pt(45, 25)}},
+	}
+	b.Vias = []Via{
+		{ID: "v1", NetID: "", X: 15 * mm, Y: 25 * mm,
+			Diameter: 1_200_000, Layers: []string{"top", "bottom"}},
+		{ID: "v2", NetID: "", X: 35 * mm, Y: 25 * mm,
+			Diameter: 1_200_000, Layers: []string{"top", "bottom"}},
+	}
+	res := Analyze(b)
+	var shorts []CheckError
+	for _, e := range res.Errors {
+		if e.Type == "short" {
+			shorts = append(shorts, e)
+		}
+	}
+	if len(shorts) != 1 {
+		t.Fatalf("expected 1 short, got %v", res.Errors)
+	}
+	s := shorts[0]
+	if len(s.Segments) != len(s.Elements)-1 || len(s.Segments) < 4 {
+		t.Fatalf("path of %d elements needs segments, got %+v", len(s.Elements), s.Segments)
+	}
+	for i, seg := range s.Segments {
+		if seg.From != s.Elements[i] || seg.To != s.Elements[i+1] {
+			t.Fatalf("segment %d endpoints mismatch: %+v vs %v", i, seg, s.Elements)
+		}
+		if seg.Layer == "" || seg.Text == "" {
+			t.Fatalf("segment %d must name layer and explain itself: %+v", i, seg)
+		}
+		if seg.X < 4*mm || seg.X > 46*mm {
+			t.Fatalf("segment %d contact off board: %+v", i, seg)
+		}
+	}
+	b.Nets = append(b.Nets, Net{ID: "n3", Name: "C"})
+	res = Analyze(b)
+	status := map[string]string{}
+	for _, n := range res.Nets {
+		status[n.ID] = n.Status
+	}
+	if status["n1"] != "short" || status["n2"] != "short" || status["n3"] != "connected" {
+		t.Fatalf("net statuses wrong: %+v", res.Nets)
+	}
+}
+
+// Moving or deleting a via must immediately change the per-net verdict:
+// nets that were connected through the via become open, and nets that
+// never depended on it stay connected.
+func TestNetStatusAfterViaMoveAndDelete(t *testing.T) {
+	mk := func() *Board {
+		b := baseBoard()
+		b.Traces = []Trace{
+			{ID: "t1", NetID: "n1", Layer: "top", Width: 500_000,
+				Points: []Point{pt(5, 25), pt(25, 25)}},
+			{ID: "t2", NetID: "n1", Layer: "bottom", Width: 500_000,
+				Points: []Point{pt(25, 25), pt(45, 25)}},
+			{ID: "t3", NetID: "n2", Layer: "top", Width: 500_000,
+				Points: []Point{pt(5, 40), pt(45, 40)}},
+		}
+		b.Vias = []Via{{ID: "v1", NetID: "n1", X: 25 * mm, Y: 25 * mm,
+			Diameter: 1_000_000, Layers: []string{"top", "bottom"}}}
+		return b
+	}
+	statusOf := func(b *Board) map[string]string {
+		m := map[string]string{}
+		for _, n := range Analyze(b).Nets {
+			m[n.ID] = n.Status
+		}
+		return m
+	}
+	b := mk()
+	if s := statusOf(b); s["n1"] != "connected" || s["n2"] != "connected" {
+		t.Fatalf("via present: both nets connected, got %v", s)
+	}
+	b = mk()
+	b.Vias[0].X = 10 * mm
+	b.Vias[0].Y = 10 * mm
+	if s := statusOf(b); s["n1"] != "open" || s["n2"] != "connected" {
+		t.Fatalf("via moved: n1 open, n2 connected, got %v", s)
+	}
+	b = mk()
+	b.Vias = nil
+	if s := statusOf(b); s["n1"] != "open" || s["n2"] != "connected" {
+		t.Fatalf("via deleted: n1 open, n2 connected, got %v", s)
+	}
+	b = mk()
+	if b.Vias[0].X != 25*mm || b.Vias[0].Y != 25*mm {
+		t.Fatalf("via coordinates not restored: %+v", b.Vias[0])
+	}
+	if s := statusOf(b); s["n1"] != "connected" {
+		t.Fatalf("via restored: n1 connected, got %v", s)
+	}
+}

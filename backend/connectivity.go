@@ -84,20 +84,54 @@ func (u *unionFind) union(a, b string) {
 // CheckError pinpoints a connectivity problem at an exact board location
 // (nanometers, board space).
 type CheckError struct {
-	Type     string   `json:"type"` // "open" | "short"
-	Message  string   `json:"message"`
-	Nets     []string `json:"nets"`
-	Elements []string `json:"elements"`
-	X        float64  `json:"x"`
-	Y        float64  `json:"y"`
-	X2       float64  `json:"x2"`
-	Y2       float64  `json:"y2"`
+	Type     string        `json:"type"` // "open" | "short"
+	Message  string        `json:"message"`
+	Nets     []string      `json:"nets"`
+	Elements []string      `json:"elements"`
+	Segments []PathSegment `json:"segments"`
+	X        float64       `json:"x"`
+	Y        float64       `json:"y"`
+	X2       float64       `json:"x2"`
+	Y2       float64       `json:"y2"`
+}
+
+// PathSegment is one hop of a conductive fault path: two elements
+// touching on a layer at a board location, with a human-readable
+// explanation so the user can walk the path segment by segment.
+type PathSegment struct {
+	From  string  `json:"from"`
+	To    string  `json:"to"`
+	Layer string  `json:"layer"`
+	X     float64 `json:"x"`
+	Y     float64 `json:"y"`
+	Text  string  `json:"text"`
+}
+
+// NetStatus summarizes one net after a check: fully connected, split
+// into disjoint copper (open), or merged with another net (short).
+type NetStatus struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Status     string `json:"status"` // "connected" | "open" | "short"
+	Components int    `json:"components"`
+}
+
+// CheckResult is the full analysis returned to the client: located
+// errors plus the per-net status used for instant recheck summaries
+// after local edits (move/delete of vias, traces, pads).
+type CheckResult struct {
+	Errors []CheckError `json:"errors"`
+	Nets   []NetStatus  `json:"nets"`
 }
 
 // CheckBoard analyzes real copper geometry (never net names) and reports
 // opens (one net split into disjoint copper) and shorts (different nets
 // physically touching), each with the contact/gap location.
-func CheckBoard(b *Board) []CheckError {
+func CheckBoard(b *Board) []CheckError { return Analyze(b).Errors }
+
+// Analyze runs the full connectivity analysis and also derives the
+// per-net status summary used by the instant-recheck UI.
+func Analyze(b *Board) CheckResult {
 	shapes := buildShapes(b)
 	uf := newUF()
 	type contact struct {
@@ -137,8 +171,8 @@ func CheckBoard(b *Board) []CheckError {
 	// exactly which objects connect them.
 	adj := map[string][]contactEdge{}
 	for _, c := range contacts {
-		adj[c.a.elemID] = append(adj[c.a.elemID], contactEdge{c.b.elemID, c.at})
-		adj[c.b.elemID] = append(adj[c.b.elemID], contactEdge{c.a.elemID, c.at})
+		adj[c.a.elemID] = append(adj[c.a.elemID], contactEdge{c.b.elemID, c.at, c.a.layer})
+		adj[c.b.elemID] = append(adj[c.b.elemID], contactEdge{c.a.elemID, c.at, c.b.layer})
 	}
 	compNets := map[string]map[string]bool{} // component root -> nets present
 	for id, net := range elemNet {
@@ -166,7 +200,18 @@ func CheckBoard(b *Board) []CheckError {
 			names = append(names, n)
 		}
 		sort.Strings(names)
-		path, at := shortPath(adj, elemNet, root, names[0])
+		path, hops := shortPath(adj, elemNet, root, names[0])
+		at := make([]fpt, len(hops))
+		segments := make([]PathSegment, len(hops))
+		for i, h := range hops {
+			at[i] = h.at
+			segments[i] = PathSegment{
+				From: path[i], To: path[i+1], Layer: h.layer,
+				X: h.at.x, Y: h.at.y,
+				Text: fmt.Sprintf("%s <-> %s @ %s (%.3f, %.3f) mm",
+					path[i], path[i+1], h.layer, h.at.x/1e6, h.at.y/1e6),
+			}
+		}
 		m := at[len(at)/2]
 		netNames := make([]string, len(names))
 		for i, n := range names {
@@ -178,6 +223,7 @@ func CheckBoard(b *Board) []CheckError {
 				strings.Join(netNames, " 与 "), strings.Join(path, " -> "), m.x/1e6, m.y/1e6),
 			Nets:     names,
 			Elements: path,
+			Segments: segments,
 			X:        m.x, Y: m.y, X2: m.x, Y2: m.y,
 		})
 	}
@@ -213,32 +259,94 @@ func CheckBoard(b *Board) []CheckError {
 		base := comps[compIDs[0]]
 		for _, other := range compIDs[1:] {
 			elems := comps[other]
-			pa, pb, d := closestBetween(shapes, toSet(base), toSet(elems))
+			pa, pb, d, layer := closestBetween(shapes, toSet(base), toSet(elems))
 			m := fmid(pa, pb)
+			from := nearestElem(shapes, toSet(base), pa)
+			to := nearestElem(shapes, toSet(elems), pb)
 			errs = append(errs, CheckError{
 				Type: "open",
 				Message: fmt.Sprintf("开路: 网络 %s 未连通, 最近间隙 %.3f mm 位于 (%.3f, %.3f) mm",
 					b.netName(net), d/1e6, m.x/1e6, m.y/1e6),
 				Nets:     []string{net},
 				Elements: append(append([]string{}, base...), elems...),
-				X:        pa.x, Y: pa.y, X2: pb.x, Y2: pb.y,
+				Segments: []PathSegment{{
+					From: from, To: to, Layer: layer, X: m.x, Y: m.y,
+					Text: fmt.Sprintf("%s 与 %s 在 %s 层断开, 间隙 %.3f mm: (%.3f, %.3f) -> (%.3f, %.3f) mm",
+						from, to, layer, d/1e6, pa.x/1e6, pa.y/1e6, pb.x/1e6, pb.y/1e6),
+				}},
+				X: pa.x, Y: pa.y, X2: pb.x, Y2: pb.y,
 			})
 		}
 	}
-	return errs
+	return CheckResult{Errors: errs, Nets: netStatuses(b, uf, elemNet, compNets)}
 }
 
 type contactEdge struct {
-	to string
-	at fpt
+	to    string
+	at    fpt
+	layer string
+}
+
+// netStatuses derives one status per declared net: "short" if the net
+// shares copper with another net, "open" if its copper is split into
+// multiple components, otherwise "connected".
+func netStatuses(b *Board, uf *unionFind, elemNet map[string]string, compNets map[string]map[string]bool) []NetStatus {
+	compsOf := map[string]map[string]bool{} // net -> component roots
+	for id, net := range elemNet {
+		if net == "" {
+			continue
+		}
+		if compsOf[net] == nil {
+			compsOf[net] = map[string]bool{}
+		}
+		compsOf[net][uf.find(id)] = true
+	}
+	var out []NetStatus
+	for _, n := range b.Nets {
+		st := NetStatus{ID: n.ID, Name: n.Name, Status: "connected"}
+		roots := compsOf[n.ID]
+		st.Components = len(roots)
+		if len(roots) > 1 {
+			st.Status = "open"
+		}
+		for root := range roots {
+			if len(compNets[root]) > 1 {
+				st.Status = "short"
+			}
+		}
+		out = append(out, st)
+	}
+	return out
+}
+
+// nearestElem returns the id of the element in set whose shape is
+// closest to point p (used to name the endpoints of an open gap).
+func nearestElem(shapes []copperShape, set map[string]bool, p fpt) string {
+	best := math.Inf(1)
+	id := ""
+	for _, s := range shapes {
+		if !set[s.elemID] {
+			continue
+		}
+		d, _, _ := shapeDist(s.sh, shape{kind: shapeCircle, c1: p})
+		if d < best {
+			best, id = d, s.elemID
+		}
+	}
+	return id
+}
+
+type pathHop struct {
+	at    fpt
+	layer string
 }
 
 // shortPath finds a contact path inside one component from an element of
 // net `from` to an element of any other named net, returning the element
 // ids in order and the contact point of each hop along the path.
-func shortPath(adj map[string][]contactEdge, elemNet map[string]string, root, from string) ([]string, []fpt) {
+func shortPath(adj map[string][]contactEdge, elemNet map[string]string, root, from string) ([]string, []pathHop) {
 	prev := map[string]string{}
-	prevAt := map[string]fpt{}
+	prevHop := map[string]pathHop{}
 	seen := map[string]bool{}
 	var queue []string
 	ids := make([]string, 0, len(elemNet))
@@ -258,29 +366,29 @@ func shortPath(adj map[string][]contactEdge, elemNet map[string]string, root, fr
 		if net := elemNet[cur]; net != "" && net != from {
 			// Reconstruct the path back to a `from` element.
 			var path []string
-			var ats []fpt
+			var hops []pathHop
 			for node := cur; ; {
 				path = append([]string{node}, path...)
 				p, ok := prev[node]
 				if !ok {
 					break
 				}
-				ats = append([]fpt{prevAt[node]}, ats...)
+				hops = append([]pathHop{prevHop[node]}, hops...)
 				node = p
 			}
-			return path, ats
+			return path, hops
 		}
 		for _, e := range adj[cur] {
 			if !seen[e.to] {
 				seen[e.to] = true
 				prev[e.to] = cur
-				prevAt[e.to] = e.at
+				prevHop[e.to] = pathHop{e.at, e.layer}
 				queue = append(queue, e.to)
 			}
 		}
 	}
 	// Unreachable in a valid component; fall back to the root element.
-	return []string{root}, []fpt{{}}
+	return []string{root}, []pathHop{{}}
 }
 
 func toSet(ids []string) map[string]bool {
@@ -293,9 +401,10 @@ func toSet(ids []string) map[string]bool {
 
 // closestBetween finds the nearest same-layer shape pair between two
 // element sets (cross-layer pairs can never connect, so they are ignored).
-func closestBetween(shapes []copperShape, setA, setB map[string]bool) (fpt, fpt, float64) {
+func closestBetween(shapes []copperShape, setA, setB map[string]bool) (fpt, fpt, float64, string) {
 	best := math.Inf(1)
 	var ba, bb fpt
+	var layer string
 	for _, sa := range shapes {
 		if !setA[sa.elemID] {
 			continue
@@ -306,9 +415,9 @@ func closestBetween(shapes []copperShape, setA, setB map[string]bool) (fpt, fpt,
 			}
 			d, pa, pb := shapeDist(sa.sh, sb.sh)
 			if d < best {
-				best, ba, bb = d, pa, pb
+				best, ba, bb, layer = d, pa, pb, sa.layer
 			}
 		}
 	}
-	return ba, bb, best
+	return ba, bb, best, layer
 }

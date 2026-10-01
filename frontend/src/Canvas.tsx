@@ -153,6 +153,7 @@ export default function Canvas() {
       // Commit the move as one undoable step.
       const cur = s.board
       useStore.setState({ past: [...s.past, d.snap], future: [], errors: [], board: cur })
+      void useStore.getState().recheck('移动')
     }
     drag.current = null
   }

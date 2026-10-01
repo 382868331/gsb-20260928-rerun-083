@@ -25,7 +25,7 @@ export default function Sidebar() {
   const save = () => run(async () => { const nb = await api.saveBoard(b); useStore.setState({ board: nb }) }, '已保存 (修订 ' + (b.revision + 1) + ')')
   const check = () => run(async () => {
     const r = await api.checkBoard(b)
-    s.set({ errors: r.errors })
+    s.set({ errors: r.errors, nets: r.nets })
   }, '')
   const doCheck = async () => {
     await check()
@@ -191,6 +191,26 @@ export default function Sidebar() {
           <div key={i} className={'err ' + er.type} onClick={() => focusError((er.x + er.x2) / 2, (er.y + er.y2) / 2)}>
             <b>{er.type === 'short' ? '短路' : '开路'}</b> {er.message}
             <div className="small">位置 ({(er.x / MM).toFixed(3)}, {(er.y / MM).toFixed(3)}) mm · 元件: {er.elements.join(', ')}</div>
+            {er.segments && er.segments.length > 0 && (
+              <div className="segs" onClick={(e) => e.stopPropagation()}>
+                {er.segments.map((seg, j) => (
+                  <div key={j} className="small seg" onClick={() => focusError(seg.x, seg.y)}>
+                    {j + 1}. {seg.text}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      <div className="group">
+        <h2>网络状态</h2>
+        {s.nets.length === 0 && <div className="row small">运行检查后显示每个网络的连通状态</div>}
+        {s.nets.map((n) => (
+          <div key={n.id} className={'row small net ' + n.status}>
+            {n.name}: {n.status === 'connected' ? '连通' : n.status === 'open' ? '断开' : '短接'}
+            {n.components > 1 ? ' (' + n.components + ' 块铜皮)' : ''}
           </div>
         ))}
       </div>

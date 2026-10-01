@@ -31,6 +31,12 @@ cd backend && go test ./...
   跨层交叉不相连 (`TestCrossLayerCrossingNotConnected`)。
 - **错误定位**: 短路报告两网络铜皮的接触点; 开路报告同网络两连通域间
   最近间隙的两端点, 前端点击错误可跳转放大到该位置。
+- **逐段故障路径**: 短路/开路错误附带 `segments` 列表, 每一段给出两端
+  元件、所在层与接触/断开点坐标及文字说明; 前端可逐段点击跳转,
+  覆盖多过孔、未命名铜线、相邻异网络焊盘等场景。
+- **即时复核**: 移动/删除过孔等局部编辑、撤销/重做后自动重新检查
+  (提交未保存的板子), 状态栏明确哪些网络因此断开、短接或仍然连通;
+  检查响应同时返回每个网络的状态 (`nets`: connected/open/short)。
 - **撤销/重做**: 前端保存板子快照历史 (Ctrl+Z / Ctrl+Y)。
 - **保存/导出/导入**: `PUT /api/board` 持久化到 `backend/data/board.json`;
   导出/导入为完整 JSON, 元件 ID 原样保留 (`TestExportImportPreservesIdentity`)。
@@ -43,7 +49,7 @@ cd backend && go test ./...
 | --- | --- | --- |
 | GET | /api/board | 当前板 |
 | PUT | /api/board | 保存 (修订号自增) |
-| POST | /api/board/check | 检查 (可带未保存的板子) |
+| POST | /api/board/check | 检查 (可带未保存的板子), 返回 {errors, nets} |
 | GET | /api/board/export | 导出 JSON |
 | POST | /api/board/import | 导入 JSON (保留 ID) |
 | POST | /api/board/reset | 重置为验证板 |

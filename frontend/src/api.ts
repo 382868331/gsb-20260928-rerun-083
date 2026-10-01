@@ -1,4 +1,4 @@
-import type { Board, CheckError } from './types'
+import type { Board, CheckResult } from './types'
 
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
   const r = await fetch(url, init)
@@ -11,7 +11,7 @@ export const api = {
   saveBoard: (b: Board) =>
     req<Board>('/api/board', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }),
   checkBoard: (b: Board) =>
-    req<{ errors: CheckError[] }>('/api/board/check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }),
+    req<CheckResult>('/api/board/check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }),
   importBoard: (b: unknown) =>
     req<Board>('/api/board/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }),
   resetBoard: () => req<Board>('/api/board/reset', { method: 'POST' }),
