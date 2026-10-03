@@ -49,14 +49,19 @@ export interface CheckReport {
   errors: CheckError[]; netStatus: NetStatus[]
   variantId?: string; revision?: number
 }
+export interface VariantSelection { dnp: string[]; jumpers: string[] }
 export interface VariantReport {
   variantId: string; name: string; revision: number
+  status?: 'ok' | 'empty' | 'missing'
+  notes?: string[]
+  selection?: VariantSelection
   errors: CheckError[]; netStatus: NetStatus[]
 }
 export interface NetDiff {
   netId: string; netName: string
   states: Record<string, string>
   onlyOpen: string[]; onlyShort: string[]
+  paths?: Record<string, PathStep[]>
 }
 export interface CompareReport {
   revision: number; variants: VariantReport[]; diff: NetDiff[]

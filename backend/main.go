@@ -68,6 +68,7 @@ func (s *server) checkBoard(w http.ResponseWriter, r *http.Request) {
 		if env.Board != nil {
 			b = env.Board
 			variantID = env.VariantID
+			sanitizeBoard(b)
 		} else {
 			var posted Board
 			if err := json.Unmarshal(data, &posted); err != nil {
@@ -75,6 +76,7 @@ func (s *server) checkBoard(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			b = &posted
+			sanitizeBoard(b)
 		}
 	}
 	rp := AnalyzeVariant(b, variantID)
@@ -96,6 +98,7 @@ func (s *server) compareVariants(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		b = &posted
+		sanitizeBoard(b)
 	}
 	writeJSON(w, 200, CompareVariants(b))
 }

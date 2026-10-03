@@ -181,7 +181,7 @@ func checkAnalysis(a *analysis) []CheckError {
 	adj := a.adj
 	hopLayer := a.hopLayer
 	elemNet := a.elemNet
-	var errs []CheckError
+	errs := []CheckError{}
 
 	// Shorts: a connected component of copper that carries two or more
 	// different net names is a short — even when the bridge is copper
@@ -425,6 +425,69 @@ func pathToNet(adj map[string][]contactEdge, elemNet map[string]string,
 				prevAt[e.to] = e.at
 				queue = append(queue, e.to)
 			}
+		}
+	}
+	if target == "" {
+		return []string{start}, nil
+	}
+	var path []string
+	var ats []fpt
+	for node := target; ; {
+		path = append([]string{node}, path...)
+		p, ok := prev[node]
+		if !ok {
+			break
+		}
+		ats = append([]fpt{prevAt[node]}, ats...)
+		node = p
+	}
+	return path, ats
+}
+
+// netConnPath returns a segment-by-segment conductive route between the
+// two most distant named elements of one net inside its connected
+// component. Used to show how a net that conducts only under one
+// assembly variant is actually wired (copper, vias, installed devices).
+func netConnPath(a *analysis, net string) ([]string, []fpt) {
+	ids := make([]string, 0, 4)
+	for id, n := range a.elemNet {
+		if n == net {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	if len(ids) == 1 {
+		return []string{ids[0]}, nil
+	}
+	start := ids[0]
+	prev := map[string]string{}
+	prevAt := map[string]fpt{}
+	depth := map[string]int{start: 0}
+	seen := map[string]bool{start: true}
+	queue := []string{start}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		nbrs := append([]contactEdge(nil), a.adj[cur]...)
+		sort.Slice(nbrs, func(i, j int) bool { return nbrs[i].to < nbrs[j].to })
+		for _, e := range nbrs {
+			if !seen[e.to] {
+				seen[e.to] = true
+				prev[e.to] = cur
+				prevAt[e.to] = e.at
+				depth[e.to] = depth[cur] + 1
+				queue = append(queue, e.to)
+			}
+		}
+	}
+	target := ""
+	best := -1
+	for _, id := range ids[1:] {
+		if d, ok := depth[id]; ok && d > best {
+			best, target = d, id
 		}
 	}
 	if target == "" {

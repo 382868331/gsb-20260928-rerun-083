@@ -2,7 +2,14 @@ import { useEffect, useRef } from 'react'
 import { api } from './api'
 import { normalizeBoard } from './normalize'
 import { MM, uid, useStore } from './store'
-import type { NetStatus, Tool } from './types'
+import type { CheckError, NetStatus, PathStep, Tool, VariantSelection } from './types'
+
+// Backend lists may arrive as null when empty; never let a missing
+// array blank the whole workbench.
+const arr = <T,>(v: T[] | null | undefined): T[] => (Array.isArray(v) ? v : [])
+
+const selKey = (sel?: VariantSelection | null): string =>
+  JSON.stringify([...arr(sel?.dnp)].sort()) + '|' + JSON.stringify([...arr(sel?.jumpers)].sort())
 
 const TOOLS: { id: Tool; label: string }[] = [
   { id: 'select', label: '选择/移动' },
@@ -63,7 +70,7 @@ export default function Sidebar() {
       if (st.board !== board || st.variantId !== variantId) return
       s.setReport(r, remember)
       s.set({ reportFor: { variantId, revision: board.revision } })
-      const n = r.errors.length
+      const n = arr(r.errors).length
       s.set({ status: `${variantName(variantId)}: ${n === 0 ? '无开路/短路' : `发现 ${n} 个问题`} (修订 ${board.revision})` })
     } catch (e) {
       s.set({ status: '复核失败: ' + (e as Error).message })
@@ -73,7 +80,7 @@ export default function Sidebar() {
   const compareAll = () =>
     run(async () => {
       const rep = await api.compareVariants(b)
-      s.set({ compare: rep })
+      s.set({ compare: rep, compareAck: null })
     }, '已比较 ' + (b.variants.length + 1) + ' 个装配方案 (修订 ' + b.revision + ')')
   const exportJson = () => {
     const blob = new Blob([JSON.stringify(b, null, 2)], { type: 'application/json' })
@@ -96,6 +103,54 @@ export default function Sidebar() {
     const zoom = Math.max(s.view.zoom, 4)
     const k = (30 / MM) * zoom
     s.setView({ zoom, panX: window.innerWidth * 0.35 - x * k, panY: window.innerHeight / 2 - y * k })
+  }
+
+  // The frozen compare report is bound to a board revision and to each
+  // variant's assembly selection. Any edit since (moved via, toggled
+  // jumper, undo, deleted variant) makes the affected rows stale; the
+  // user chooses to keep the frozen basis or re-check the current
+  // board — the report is never silently swapped out.
+  const compareStale: string[] = []
+  if (s.compare) {
+    if (s.compare.revision !== b.revision) {
+      compareStale.push(`板已修改: 报告基于修订 ${s.compare.revision}, 当前为修订 ${b.revision}`)
+    }
+    for (const vr of arr(s.compare.variants)) {
+      if (!vr.variantId) continue
+      const cur = b.variants.find((v) => v.id === vr.variantId)
+      if (!cur) {
+        compareStale.push(`方案 ${vr.name} 已被删除`)
+      } else if (vr.selection && selKey(vr.selection) !== selKey(cur)) {
+        compareStale.push(`方案 ${cur.name} 的装配选择已变化 (跳线/缺装器件)`)
+      }
+    }
+  }
+  const staleKey = s.compare ? s.compare.revision + '|' + compareStale.join(';') : ''
+  const compareIsStale = compareStale.length > 0 && s.compareAck !== staleKey
+
+  // Jump to a path segment only when the report still matches the
+  // current board revision; otherwise say the path is from an old
+  // revision instead of jumping to geometry that may have moved.
+  const jumpStep = (st: PathStep, reportRevision: number) => {
+    if (reportRevision !== b.revision) {
+      s.set({ status: `该路径来自旧修订 ${reportRevision} (当前修订 ${b.revision}), 请重新比较或保留冻结结果` })
+      return
+    }
+    focusError(st.x, st.y)
+  }
+  const jumpPoint = (x: number, y: number, reportRevision: number) => {
+    if (reportRevision !== b.revision) {
+      s.set({ status: `该位置来自旧修订 ${reportRevision} (当前修订 ${b.revision}), 请重新比较或保留冻结结果` })
+      return
+    }
+    focusError(x, y)
+  }
+
+  const variantStatusOf = (vr: { status?: string; errors?: CheckError[] | null }): string => {
+    if (vr.status === 'missing') return '资料缺失'
+    if (vr.status === 'empty') return '没有可用路径'
+    const n = arr(vr.errors).length
+    return n === 0 ? '无故障' : `发现 ${n} 个问题`
   }
 
   // Diff the latest per-net states against those remembered before the
@@ -209,14 +264,70 @@ export default function Sidebar() {
       {s.compare && (
         <div className="group">
           <h2>方案间差异 (修订 {s.compare.revision})</h2>
-          {s.compare.diff.length === 0 && <div className="row small">各方案网络状态一致</div>}
-          {s.compare.diff.map((d) => (
+          {compareIsStale && (
+            <div className="netst open">
+              <b>对照已过期</b>
+              {compareStale.map((r, i) => <div key={i} className="small">{r}</div>)}
+              <div className="row">
+                <button onClick={() => s.set({ compareAck: staleKey })}>保留冻结结果</button>
+                <button className="primary" onClick={compareAll}>对当前板重新比较</button>
+              </div>
+            </div>
+          )}
+          <div className="row small">
+            比较依据: 修订 {s.compare.revision} · 各方案装配选择已冻结
+            {!compareIsStale && compareStale.length > 0 && ' (已过期, 已选择保留)'}
+          </div>
+          {arr(s.compare.variants).map((vr) => (
+            <div key={vr.variantId || 'base'} className="netst">
+              <b>{vr.name}</b>: {variantStatusOf(vr)}
+              {arr(vr.notes).map((n, i) => <div key={i} className="small">{n}</div>)}
+              {arr(vr.errors).map((er, i) => (
+                <div key={i} className={'err ' + er.type}>
+                  <div onClick={() => jumpPoint((er.x + er.x2) / 2, (er.y + er.y2) / 2, vr.revision)}>
+                    <b>{er.type === 'short' ? '短路' : '开路'}</b> {er.message}
+                  </div>
+                  {arr(er.steps).length > 0 && (
+                    <ol className="steps">
+                      {arr(er.steps).map((st, j) => (
+                        <li key={j} className={st.kind} onClick={() => jumpStep(st, vr.revision)}>
+                          {st.kind === 'element' ? (
+                            <>{j === 0 ? '' : '└ '}<b>{st.id}</b> [{st.netName}] @ {st.layer}</>
+                          ) : (
+                            <span className="hop">↳ {st.layer} 层接触/间隙 @ ({(st.x / MM).toFixed(2)}, {(st.y / MM).toFixed(2)}) mm</span>
+                          )}
+                        </li>
+                      ))}
+                    </ol>
+                  )}
+                </div>
+              ))}
+            </div>
+          ))}
+          {arr(s.compare.diff).length === 0 && <div className="row small">各方案网络状态一致</div>}
+          {arr(s.compare.diff).map((d) => (
             <div key={d.netId} className="netst">
               <b>{d.netName}</b>
-              {d.onlyShort.length > 0 && <div className="small">仅在 {d.onlyShort.map(variantName).join('、')} 短路</div>}
-              {d.onlyOpen.length > 0 && <div className="small">仅在 {d.onlyOpen.map(variantName).join('、')} 断开</div>}
+              {arr(d.onlyShort).length > 0 && <div className="small">仅在 {arr(d.onlyShort).map(variantName).join('、')} 短路</div>}
+              {arr(d.onlyOpen).length > 0 && <div className="small">仅在 {arr(d.onlyOpen).map(variantName).join('、')} 断开</div>}
+              {Object.entries(d.paths ?? {}).map(([vid, steps]) => (
+                <div key={vid} className="small">
+                  仅在 {variantName(vid)} 导通的路径:
+                  <ol className="steps">
+                    {arr(steps).map((st, j) => (
+                      <li key={j} className={st.kind} onClick={() => jumpStep(st, s.compare!.revision)}>
+                        {st.kind === 'element' ? (
+                          <>{j === 0 ? '' : '└ '}<b>{st.id}</b> [{st.netName}] @ {st.layer}</>
+                        ) : (
+                          <span className="hop">↳ {st.layer} 层接触 @ ({(st.x / MM).toFixed(2)}, {(st.y / MM).toFixed(2)}) mm</span>
+                        )}
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              ))}
               <div className="small">
-                {s.compare!.variants.map((v) => (
+                {arr(s.compare?.variants).map((v) => (
                   <div key={v.variantId}>{v.name}: {stateLabel[d.states[v.variantId]] ?? d.states[v.variantId]}</div>
                 ))}
               </div>
@@ -330,7 +441,7 @@ export default function Sidebar() {
           {s.netStatus.map((n) => (
             <div key={n.netId} className={'netst ' + n.state}>
               <b>{n.netName}</b>: {stateLabel[n.state] ?? n.state}
-              {n.state === 'short' && <> · 与 {n.shortedWith.map((id) => b.nets.find((x) => x.id === id)?.name ?? id).join(', ')} 短接</>}
+              {n.state === 'short' && <> · 与 {arr(n.shortedWith).map((id) => b.nets.find((x) => x.id === id)?.name ?? id).join(', ')} 短接</>}
               {n.state === 'open' && <> · {n.components} 个独立铜皮域</>}
               <span className="small">{transitionOf(n)}</span>
             </div>
@@ -347,9 +458,9 @@ export default function Sidebar() {
             <div onClick={() => focusError((er.x + er.x2) / 2, (er.y + er.y2) / 2)}>
               <b>{er.type === 'short' ? '短路' : '开路'}</b> {er.message}
             </div>
-            {er.steps && er.steps.length > 0 && (
+            {arr(er.steps).length > 0 && (
               <ol className="steps">
-                {er.steps.map((st, j) => (
+                {arr(er.steps).map((st, j) => (
                   <li key={j} className={st.kind} onClick={() => focusError(st.x, st.y)}>
                     {st.kind === 'element' ? (
                       <>{j === 0 ? '' : '└ '}<b>{st.id}</b> [{st.netName}] @ {st.layer} <span className="small">({(st.x / MM).toFixed(2)}, {(st.y / MM).toFixed(2)}) mm</span></>

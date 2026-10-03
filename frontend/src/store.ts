@@ -27,6 +27,7 @@ interface State {
   variantId: string
   reportFor: { variantId: string; revision: number } | null
   compare: CompareReport | null
+  compareAck: string | null
   status: string
   view: { zoom: number; panX: number; panY: number }
   pathError: CheckError | null
@@ -61,6 +62,7 @@ export const useStore = create<State>((set, get) => ({
   variantId: '',
   reportFor: null,
   compare: null,
+  compareAck: null,
   status: '',
   pathError: null,
   view: { zoom: 1, panX: 60, panY: 40 },
@@ -76,6 +78,7 @@ export const useStore = create<State>((set, get) => ({
       variantId: '',
       reportFor: null,
       compare: null,
+      compareAck: null,
       pathError: null,
       selected: null,
       draft: [],
@@ -121,14 +124,17 @@ export const useStore = create<State>((set, get) => ({
   // show which nets just broke / shorted / recovered after a local edit.
   setReport: (r, remember) =>
     set((st) => ({
-      errors: r.errors,
-      netStatus: r.netStatus,
+      errors: Array.isArray(r.errors) ? r.errors : [],
+      netStatus: Array.isArray(r.netStatus) ? r.netStatus : [],
       lastStatus: remember ? st.netStatus : st.lastStatus,
       pathError: null,
     })),
   // Switching variants clears the previous verdict so the next render
   // can never show one variant's conclusions under another's name; the
   // sidebar effect immediately re-checks the newly selected variant.
+  // The frozen compare report is kept: it names its own board revision
+  // and assembly selections, and the sidebar flags it as stale instead
+  // of silently dropping or replacing its basis.
   setVariant: (id) =>
-    set({ variantId: id, errors: [], netStatus: [], lastStatus: [], reportFor: null, compare: null, pathError: null }),
+    set({ variantId: id, errors: [], netStatus: [], lastStatus: [], reportFor: null, pathError: null }),
 }))

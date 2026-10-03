@@ -65,12 +65,23 @@ func AnalyzeVariant(b *Board, variantID string) Report {
 	return AnalyzeBoard(boardForVariant(b, variantOf(b, variantID)))
 }
 
+// Selection snapshots the assembly choices a variant report was
+// computed from, so the client can tell later whether the user changed
+// jumper/DNP selections after the report was frozen.
+type Selection struct {
+	DNP     []string `json:"dnp"`
+	Jumpers []string `json:"jumpers"`
+}
+
 // VariantReport is one variant's verdict, stamped with the board
 // revision it was computed from.
 type VariantReport struct {
 	VariantID string       `json:"variantId"`
 	Name      string       `json:"name"`
 	Revision  int          `json:"revision"`
+	Status    string       `json:"status"` // "ok" | "empty" | "missing"
+	Notes     []string     `json:"notes"`
+	Selection Selection    `json:"selection"`
 	Errors    []CheckError `json:"errors"`
 	NetStatus []NetStatus  `json:"netStatus"`
 }
@@ -84,6 +95,9 @@ type NetDiff struct {
 	States    map[string]string `json:"states"`
 	OnlyOpen  []string          `json:"onlyOpen"`
 	OnlyShort []string          `json:"onlyShort"`
+	// Paths explains, per variant where this net conducts while others
+	// lose it, the exact copper/via/device route that carries it.
+	Paths map[string][]PathStep `json:"paths"`
 }
 
 // CompareReport holds every variant's independent result plus the
@@ -110,15 +124,39 @@ func CompareVariants(b *Board) CompareReport {
 		}
 		slots = append(slots, slot{v.ID, name})
 	}
-	rep := CompareReport{Revision: b.Revision}
+	rep := CompareReport{Revision: b.Revision, Variants: []VariantReport{}, Diff: []NetDiff{}}
 	stateOf := map[string]map[string]string{}
 	nameOf := map[string]string{}
+	analyses := map[string]*analysis{}
+	derived := map[string]*Board{}
 	for _, s := range slots {
-		r := AnalyzeVariant(b, s.id)
+		v := variantOf(b, s.id)
 		vr := VariantReport{
 			VariantID: s.id, Name: s.name, Revision: b.Revision,
-			Errors: r.Errors, NetStatus: r.NetStatus,
+			Status: "ok", Notes: []string{}, Selection: selectionOf(v),
+			Errors: []CheckError{}, NetStatus: []NetStatus{},
 		}
+		// A variant referencing pads/jumpers the board no longer has is
+		// incomplete data: say so, but still analyze what exists so one
+		// broken variant never blocks the others or the board itself.
+		if missing := missingRefs(b, v); len(missing) > 0 {
+			vr.Status = "missing"
+			vr.Notes = append(vr.Notes, missing...)
+		}
+		vb := boardForVariant(b, v)
+		if len(vb.Pads)+len(vb.Traces)+len(vb.Vias) == 0 {
+			vr.Status = "empty"
+			vr.Notes = append(vr.Notes, "该方案没有任何可用导电路径 (器件/铜线/过孔均为空)")
+			rep.Variants = append(rep.Variants, vr)
+			continue
+		}
+		r, a := safeAnalyze(vb, &vr)
+		if a != nil {
+			analyses[s.id] = a
+			derived[s.id] = vb
+		}
+		vr.Errors = r.Errors
+		vr.NetStatus = r.NetStatus
 		rep.Variants = append(rep.Variants, vr)
 		for _, ns := range r.NetStatus {
 			if stateOf[ns.NetID] == nil {
@@ -137,7 +175,7 @@ func CompareVariants(b *Board) CompareReport {
 		states := stateOf[id]
 		first := states[slots[0].id]
 		same := true
-		var onlyOpen, onlyShort []string
+		onlyOpen, onlyShort := []string{}, []string{}
 		for _, s := range slots {
 			st := states[s.id]
 			if st != first {
@@ -153,10 +191,84 @@ func CompareVariants(b *Board) CompareReport {
 		if same {
 			continue
 		}
-		rep.Diff = append(rep.Diff, NetDiff{
+		d := NetDiff{
 			NetID: id, NetName: nameOf[id], States: states,
 			OnlyOpen: onlyOpen, OnlyShort: onlyShort,
-		})
+			Paths: map[string][]PathStep{},
+		}
+		// For every variant where this net still conducts while another
+		// loses it, record the exact conductive route (copper, vias,
+		// installed devices) so the UI can replay it segment by segment.
+		for _, s := range slots {
+			if states[s.id] != "connected" {
+				continue
+			}
+			a, ok := analyses[s.id]
+			if !ok {
+				continue
+			}
+			path, ats := netConnPath(a, id)
+			if len(path) == 0 {
+				continue
+			}
+			d.Paths[s.id] = buildSteps(derived[s.id], a.elemNet, path, ats, a.hopLayer)
+		}
+		rep.Diff = append(rep.Diff, d)
 	}
 	return rep
+}
+
+// selectionOf snapshots a variant's assembly choices (nil for base).
+func selectionOf(v *Variant) Selection {
+	if v == nil {
+		return Selection{DNP: []string{}, Jumpers: []string{}}
+	}
+	return Selection{
+		DNP:     append([]string{}, v.DNP...),
+		Jumpers: append([]string{}, v.Jumpers...),
+	}
+}
+
+// missingRefs lists the assembly references a variant makes to elements
+// the board no longer contains (deleted pads / jumpers).
+func missingRefs(b *Board, v *Variant) []string {
+	if v == nil {
+		return nil
+	}
+	padIDs := map[string]bool{}
+	for _, p := range b.Pads {
+		padIDs[p.ID] = true
+	}
+	jumperIDs := map[string]bool{}
+	for _, j := range b.Jumpers {
+		jumperIDs[j.ID] = true
+	}
+	var out []string
+	for _, id := range v.DNP {
+		if !padIDs[id] {
+			out = append(out, "方案引用了不存在的器件 "+id+" (资料缺失, 已忽略)")
+		}
+	}
+	for _, id := range v.Jumpers {
+		if !jumperIDs[id] {
+			out = append(out, "方案引用了不存在的跳线 "+id+" (资料缺失, 已忽略)")
+		}
+	}
+	return out
+}
+
+// safeAnalyze runs the geometric analysis for one derived variant view;
+// a failure is recorded on that variant's report instead of aborting
+// the whole comparison.
+func safeAnalyze(vb *Board, vr *VariantReport) (r Report, a *analysis) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			vr.Status = "missing"
+			vr.Notes = append(vr.Notes, "分析未能完成, 结果不完整")
+			r = Report{Errors: []CheckError{}, NetStatus: []NetStatus{}}
+			a = nil
+		}
+	}()
+	an := buildAnalysis(vb)
+	return Report{Errors: checkAnalysis(an), NetStatus: summaryOf(vb, an)}, an
 }
