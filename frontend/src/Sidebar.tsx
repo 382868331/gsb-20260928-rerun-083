@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { api } from './api'
+import { normalizeBoard } from './normalize'
 import { MM, uid, useStore } from './store'
 import type { CheckReport, NetStatus, Tool } from './types'
 
@@ -15,36 +16,44 @@ export default function Sidebar() {
   const s = useStore()
   const b = s.board
   const fileRef = useRef<HTMLInputElement>(null)
-  if (!b) return <aside className="sidebar" />
 
   const run = async (fn: () => Promise<void>, ok: string) => {
     try { await fn() } catch (e) { s.set({ status: '错误: ' + (e as Error).message }) ; return }
     s.set({ status: ok })
   }
 
-  const save = () => run(async () => { const nb = await api.saveBoard(b); useStore.setState({ board: nb }) }, '已保存 (修订 ' + (b.revision + 1) + ')')
+  // Reads the live store at call time so it stays valid regardless of
+  // which render scheduled it (and never closes over a null board).
   const doCheck = async (remember = false) => {
+    const st = useStore.getState()
+    const bd = st.board
+    if (!bd) return
     try {
-      const r: CheckReport = await api.checkBoard(b)
-      s.setReport(r, remember)
+      const r: CheckReport = await api.checkBoard(bd, st.asmId)
+      st.setReport(r, remember)
       const n = r.errors.length
-      s.set({ status: n === 0 ? '即时复核: 无开路/短路' : `即时复核: 发现 ${n} 个问题` })
+      st.set({ status: n === 0 ? '即时复核: 无开路/短路' : `即时复核: 发现 ${n} 个问题` })
     } catch (e) {
-      s.set({ status: '复核失败: ' + (e as Error).message })
+      st.set({ status: '复核失败: ' + (e as Error).message })
     }
   }
 
   // Instant re-verification after every local edit (place/move/delete,
-  // undo/redo, layer or net change). Board coordinates are integer nm and
-  // checks are geometry-only, so zoom level never affects the verdict.
+  // undo/redo, layer or net change) and after every variant switch, so
+  // each assembly's verdict reflects its own mounted set and board
+  // revision. Geometry-only checks: zoom never affects the verdict.
   const firstRun = useRef(true)
   useEffect(() => {
-    if (!b) return
+    if (!useStore.getState().board) return
     if (firstRun.current) { firstRun.current = false; return }
-    const h = setTimeout(() => { doCheck(true) }, 200)
+    const h = setTimeout(() => { void doCheck(true) }, 200)
     return () => clearTimeout(h)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [b])
+  }, [b, s.asmId])
+
+  if (!b) return <aside className="sidebar" />
+
+  const save = () => run(async () => { const nb = await api.saveBoard(b); useStore.setState({ board: nb }) }, '已保存 (修订 ' + (b.revision + 1) + ')')
   const exportJson = () => {
     const blob = new Blob([JSON.stringify(b, null, 2)], { type: 'application/json' })
     const a = document.createElement('a')
@@ -57,9 +66,32 @@ export default function Sidebar() {
     run(async () => {
       const parsed = JSON.parse(await f.text())
       const nb = await api.importBoard(parsed)
-      s.setBoard(nb)
+      const { board, warnings } = normalizeBoard(nb)
+      s.setBoard(board)
+      if (warnings.length > 0) s.set({ warnings })
     }, '导入完成, 元件身份已保留')
   const reset = () => run(async () => s.setBoard(await api.resetBoard()), '已重置为验证板')
+
+  const addAssembly = () => {
+    const name = prompt('新装配方案名称')
+    if (name) s.commit((bb) => { bb.assemblies.push({ id: uid('asm'), name, exclude: [] }) })
+  }
+
+  // Re-check every variant against the same shared geometry and surface
+  // the nets that short or open only under some stuffing options.
+  const doCompare = async () => {
+    try {
+      const cr = await api.compareAssemblies(b)
+      useStore.setState((st) => ({ compare: cr, reports: { ...st.reports, ...cr.reports } }))
+      s.set({
+        status: cr.diffs.length === 0
+          ? '方案比较: 各装配方案连通结论一致'
+          : `方案比较: ${cr.diffs.length} 个网络只在部分方案中短接/断开`,
+      })
+    } catch (e) {
+      s.set({ status: '比较失败: ' + (e as Error).message })
+    }
+  }
 
   const focusError = (x: number, y: number) => {
     const zoom = Math.max(s.view.zoom, 4)
@@ -113,6 +145,49 @@ export default function Sidebar() {
             onChange={(e) => { const f = e.target.files?.[0]; if (f) importJson(f); e.target.value = '' }} />
         </div>
         {s.status && <div className="row small status">{s.status}</div>}
+        {s.warnings.length > 0 && (
+          <div className="warnings">
+            {s.warnings.map((w, i) => <div key={i} className="row small">⚠ {w}</div>)}
+          </div>
+        )}
+      </div>
+
+      <div className="group">
+        <h2>装配方案</h2>
+        <label>当前方案
+          <select value={s.asmId} onChange={(e) => s.setAssembly(e.target.value)}>
+            <option value="">基板 (全部安装)</option>
+            {b.assemblies.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+          </select>
+        </label>
+        {s.asmId && (
+          <div className="row small">
+            未安装 {b.assemblies.find((a) => a.id === s.asmId)?.exclude.length ?? 0} 个元件;
+            选中元件后可按方案勾选是否安装
+          </div>
+        )}
+        <div className="row">
+          <button onClick={addAssembly}>+ 方案</button>
+          <button onClick={doCompare}>比较所有方案</button>
+        </div>
+        {s.compare && (
+          <div>
+            {s.compare.diffs.length === 0 && <div className="row small">各方案连通结论一致</div>}
+            {s.compare.diffs.map((d) => (
+              <div key={d.netId + d.kind} className={'diff ' + d.kind}>
+                <b>{d.netName}</b> {d.kind === 'short' ? '短路' : '开路'}仅出现在: {d.onlyIn.join('、')}
+                <div className="row wrap">
+                  {d.states.map((st) => (
+                    <button key={st.assemblyId} className="linkbtn"
+                      onClick={() => s.setAssembly(st.assemblyId)}>
+                      {st.assemblyName}: {stateLabel[st.state] ?? st.state}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="group">
@@ -210,12 +285,32 @@ export default function Sidebar() {
               ))}
             </div>
           )}
+          {b.assemblies.length > 0 && (
+            <>
+              <div className="row small">各方案安装:</div>
+              <div className="row wrap">
+                {b.assemblies.map((a) => (
+                  <label key={a.id} className="chk">
+                    <input type="checkbox" checked={!a.exclude.includes(sel.id)}
+                      onChange={(e) => s.commit((bb) => {
+                        const asm = bb.assemblies.find((x) => x.id === a.id)
+                        if (!asm) return
+                        asm.exclude = e.target.checked
+                          ? asm.exclude.filter((id) => id !== sel.id)
+                          : [...asm.exclude, sel.id]
+                      })} />
+                    {a.name}
+                  </label>
+                ))}
+              </div>
+            </>
+          )}
         </div>
       )}
 
       {s.netStatus.length > 0 && (
         <div className="group">
-          <h2>网络连通复核 ({s.netStatus.length})</h2>
+          <h2>网络连通复核 ({s.netStatus.length}){s.asmId ? ' · ' + (b.assemblies.find((a) => a.id === s.asmId)?.name ?? s.asmId) : ''}</h2>
           {s.netStatus.map((n) => (
             <div key={n.netId} className={'netst ' + n.state}>
               <b>{n.netName}</b>: {stateLabel[n.state] ?? n.state}

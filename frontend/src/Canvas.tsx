@@ -152,7 +152,7 @@ export default function Canvas() {
     if (d?.kind === 'move' && d.snap && s.board) {
       // Commit the move as one undoable step.
       const cur = s.board
-      useStore.setState({ past: [...s.past, d.snap], future: [], errors: [], pathError: null, board: cur })
+      useStore.setState({ past: [...s.past, d.snap], future: [], errors: [], pathError: null, reports: {}, compare: null, board: cur })
     }
     drag.current = null
   }
@@ -164,6 +164,10 @@ export default function Canvas() {
   const selId = s.selected?.id
   const inactive = (l: string) => (l === s.layer ? 1 : 0.3)
   const pts = (ps: Point[]) => ps.map((p) => `${p.x},${p.y}`).join(' ')
+  // Elements the current assembly variant leaves unmounted: shown dimmed
+  // so it is obvious they carry no conductive role in this variant.
+  const excluded = new Set(s.asmId ? (b.assemblies.find((a) => a.id === s.asmId)?.exclude ?? []) : [])
+  const mounted = (id: string) => (excluded.has(id) ? 0.15 : 1)
 
   return (
     <div className="canvas">
@@ -185,7 +189,7 @@ export default function Canvas() {
               key={t.id} points={pts(t.points)} fill="none"
               stroke={layerColor(t.layer, b.layers.indexOf(t.layer))}
               strokeWidth={t.width} strokeLinecap="round" strokeLinejoin="round"
-              opacity={inactive(t.layer)}
+              opacity={inactive(t.layer) * mounted(t.id)}
               style={{ pointerEvents: s.tool === 'select' ? 'auto' : 'none', cursor: 'move' }}
               onPointerDown={(e) => onElemPointerDown(e, 'trace', t.id)}
             />
@@ -197,7 +201,7 @@ export default function Canvas() {
             ) : null,
           )}
           {b.vias.map((v) => (
-            <g key={v.id} opacity={1}
+            <g key={v.id} opacity={mounted(v.id)}
               style={{ pointerEvents: s.tool === 'select' ? 'auto' : 'none', cursor: 'move' }}
               onPointerDown={(e) => onElemPointerDown(e, 'via', v.id)}>
               <circle cx={v.x} cy={v.y} r={v.diameter / 2} fill="#c9a227"
@@ -208,7 +212,7 @@ export default function Canvas() {
           {b.pads.map((p) => {
             const col = p.layer === 'through' ? '#c9a227' : layerColor(p.layer, b.layers.indexOf(p.layer))
             const common = {
-              fill: col, opacity: p.layer === 'through' ? 1 : inactive(p.layer),
+              fill: col, opacity: (p.layer === 'through' ? 1 : inactive(p.layer)) * mounted(p.id),
               stroke: selId === p.id ? '#fff' : 'none', strokeWidth: 0.25 * MM,
               style: { pointerEvents: s.tool === 'select' ? ('auto' as const) : ('none' as const), cursor: 'move' },
               onPointerDown: (e: React.PointerEvent) => onElemPointerDown(e, 'pad', p.id),

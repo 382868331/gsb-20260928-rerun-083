@@ -207,3 +207,73 @@ func TestSaveReloadShortThroughUnnettedCopper(t *testing.T) {
 		t.Fatalf("fractional nm should be rejected with 400, got %d", w.Code)
 	}
 }
+
+// The check endpoint scopes verdicts to the requested assembly variant,
+// and the compare endpoint returns independent per-variant reports plus
+// the cross-variant diff.
+func TestAPICheckAssemblyAndCompare(t *testing.T) {
+	s := newTestServer(t)
+	body, _ := json.Marshal(s.board)
+
+	r := httptest.NewRequest("POST", "/api/board/check?asm=asm-no-jmp", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	s.checkBoard(w, r)
+	if w.Code != 200 {
+		t.Fatalf("assembly check failed: %s", w.Body.String())
+	}
+	var res struct {
+		NetStatus []NetStatus `json:"netStatus"`
+		Assembly  string      `json:"assembly"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+		t.Fatal(err)
+	}
+	if res.Assembly != "asm-no-jmp" {
+		t.Fatalf("response must echo the checked variant, got %q", res.Assembly)
+	}
+	for _, n := range res.NetStatus {
+		if n.NetID == "net-pwr" && n.State != "open" {
+			t.Fatalf("PWR must be open in asm-no-jmp, got %+v", n)
+		}
+	}
+
+	r2 := httptest.NewRequest("POST", "/api/board/assemblies/compare", bytes.NewReader(body))
+	w2 := httptest.NewRecorder()
+	s.compareAssemblies(w2, r2)
+	if w2.Code != 200 {
+		t.Fatalf("compare failed: %s", w2.Body.String())
+	}
+	var cr CompareReport
+	if err := json.Unmarshal(w2.Body.Bytes(), &cr); err != nil {
+		t.Fatal(err)
+	}
+	if len(cr.Reports) != 3 || len(cr.Diffs) == 0 {
+		t.Fatalf("compare should cover 3 variants with a PWR diff, got %+v", cr.Diffs)
+	}
+}
+
+// A saved board keeps its assembly variants across reload, so each
+// variant can still be checked independently after reopening.
+func TestAssemblyVariantsSurviveSaveReload(t *testing.T) {
+	s := newTestServer(t)
+	body, _ := json.Marshal(s.board)
+	r := httptest.NewRequest("PUT", "/api/board", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	s.putBoard(w, r)
+	if w.Code != 200 {
+		t.Fatalf("save failed: %s", w.Body.String())
+	}
+	loaded, err := s.st.load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.Assemblies) != 2 {
+		t.Fatalf("assemblies lost on reload: %+v", loaded.Assemblies)
+	}
+	if got := asmState(t, loaded, "asm-no-jmp", "net-pwr"); got != "open" {
+		t.Fatalf("reloaded asm-no-jmp PWR = %s, want open", got)
+	}
+	if got := asmState(t, loaded, "asm-full", "net-pwr"); got != "connected" {
+		t.Fatalf("reloaded asm-full PWR = %s, want connected", got)
+	}
+}

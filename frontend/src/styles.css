@@ -36,3 +36,7 @@ input[type=number] { width: 90px; }
 .canvas svg { width: 100%; height: 100%; display: block; background: #14161a; touch-action: none; }
 .canvas.loading { display: flex; align-items: center; justify-content: center; }
 .cursor-readout { position: absolute; right: 10px; bottom: 8px; font-size: 11px; color: #7a8; pointer-events: none; font-family: monospace; }
+.warnings { max-height: 120px; overflow-y: auto; border-left: 3px solid #ffca28; padding-left: 6px; margin: 4px 0; }
+.diff { margin: 4px 0; padding: 4px; border-radius: 4px; font-size: 12px; }
+.diff.short { background: rgba(255,23,68,0.12); }
+.diff.open { background: rgba(255,145,0,0.12); }

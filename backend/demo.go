@@ -19,6 +19,7 @@ func demoBoard() *Board {
 			{ID: "net-gnd", Name: "GND"},
 			{ID: "net-vcc", Name: "VCC"},
 			{ID: "net-sig", Name: "SIG"},
+			{ID: "net-pwr", Name: "PWR"},
 		},
 		Pads: []Pad{
 			{ID: "pad-sig-in", NetID: "net-sig", Layer: "top", Shape: "circle",
@@ -32,6 +33,11 @@ func demoBoard() *Board {
 				X: 29_050_000, Y: 25 * mm, Diameter: 1.5 * mm, Drill: 0},
 			{ID: "pad-vcc-th", NetID: "net-vcc", Layer: "through", Shape: "circle",
 				X: 10 * mm, Y: 35 * mm, Diameter: 2.2 * mm, Drill: 1 * mm},
+			// Optional power link: connected only while the jumper is mounted.
+			{ID: "pad-pwr-a", NetID: "net-pwr", Layer: "top", Shape: "circle",
+				X: 30 * mm, Y: 35 * mm, Diameter: 1.5 * mm, Drill: 0},
+			{ID: "pad-pwr-b", NetID: "net-pwr", Layer: "top", Shape: "circle",
+				X: 45 * mm, Y: 35 * mm, Diameter: 1.5 * mm, Drill: 0},
 		},
 		Traces: []Trace{
 			// Top-layer SIG trace, crossed by a bottom-layer SIG trace:
@@ -48,10 +54,18 @@ func demoBoard() *Board {
 			// GND trace stopping 0.1 mm short of pad-gnd-gap.
 			{ID: "trace-gnd-gap", NetID: "net-gnd", Layer: "top", Width: 400_000,
 				Points: []Point{pt(10, 25), pt(28, 25)}},
+			// Optional jumper: mounted in the full assembly, omitted in the
+			// no-jumper variant, where PWR splits into two copper domains.
+			{ID: "trace-pwr-jmp", NetID: "net-pwr", Layer: "top", Width: 500_000,
+				Points: []Point{pt(30, 35), pt(45, 35)}},
 		},
 		Vias: []Via{
 			{ID: "via-sig", NetID: "net-sig", X: 50 * mm, Y: 15 * mm,
 				Diameter: 1.2 * mm, Drill: 600_000, Layers: []string{"top", "bottom"}},
+		},
+		Assemblies: []Assembly{
+			{ID: "asm-full", Name: "全装方案", Exclude: []string{}},
+			{ID: "asm-no-jmp", Name: "无跳线方案", Exclude: []string{"trace-pwr-jmp"}},
 		},
 	}
 }

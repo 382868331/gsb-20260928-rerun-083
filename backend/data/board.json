@@ -36,6 +36,10 @@
     {
       "id": "net-sig",
       "name": "SIG"
+    },
+    {
+      "id": "net-pwr",
+      "name": "PWR"
     }
   ],
   "pads": [
@@ -98,6 +102,30 @@
       "w": 0,
       "h": 0,
       "drill": 1000000
+    },
+    {
+      "id": "pad-pwr-a",
+      "netId": "net-pwr",
+      "layer": "top",
+      "shape": "circle",
+      "x": 30000000,
+      "y": 35000000,
+      "diameter": 1500000,
+      "w": 0,
+      "h": 0,
+      "drill": 0
+    },
+    {
+      "id": "pad-pwr-b",
+      "netId": "net-pwr",
+      "layer": "top",
+      "shape": "circle",
+      "x": 45000000,
+      "y": 35000000,
+      "diameter": 1500000,
+      "w": 0,
+      "h": 0,
+      "drill": 0
     }
   ],
   "traces": [
@@ -188,6 +216,22 @@
           "y": 25000000
         }
       ]
+    },
+    {
+      "id": "trace-pwr-jmp",
+      "netId": "net-pwr",
+      "layer": "top",
+      "width": 500000,
+      "points": [
+        {
+          "x": 30000000,
+          "y": 35000000
+        },
+        {
+          "x": 45000000,
+          "y": 35000000
+        }
+      ]
     }
   ],
   "vias": [
@@ -201,6 +245,20 @@
       "layers": [
         "top",
         "bottom"
+      ]
+    }
+  ],
+  "assemblies": [
+    {
+      "id": "asm-full",
+      "name": "全装方案",
+      "exclude": []
+    },
+    {
+      "id": "asm-no-jmp",
+      "name": "无跳线方案",
+      "exclude": [
+        "trace-pwr-jmp"
       ]
     }
   ]

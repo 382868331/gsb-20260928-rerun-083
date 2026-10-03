@@ -1,4 +1,4 @@
-import type { Board, CheckReport } from './types'
+import type { Board, CheckReport, CompareResult } from './types'
 
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
   const r = await fetch(url, init)
@@ -10,8 +10,10 @@ export const api = {
   getBoard: () => req<Board>('/api/board'),
   saveBoard: (b: Board) =>
     req<Board>('/api/board', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }),
-  checkBoard: (b: Board) =>
-    req<CheckReport>('/api/board/check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }),
+  checkBoard: (b: Board, asm = '') =>
+    req<CheckReport>('/api/board/check' + (asm ? `?asm=${encodeURIComponent(asm)}` : ''), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }),
+  compareAssemblies: (b: Board) =>
+    req<CompareResult>('/api/board/assemblies/compare', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }),
   importBoard: (b: unknown) =>
     req<Board>('/api/board/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }),
   resetBoard: () => req<Board>('/api/board/reset', { method: 'POST' }),

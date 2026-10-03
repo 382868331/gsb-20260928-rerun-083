@@ -49,15 +49,26 @@ type Via struct {
 }
 
 type Board struct {
-	ID       string   `json:"id"`
-	Name     string   `json:"name"`
-	Revision int      `json:"revision"`
-	Outline  []Point  `json:"outline"`
-	Layers   []string `json:"layers"`
-	Nets     []Net    `json:"nets"`
-	Pads     []Pad    `json:"pads"`
-	Traces   []Trace  `json:"traces"`
-	Vias     []Via    `json:"vias"`
+	ID         string     `json:"id"`
+	Name       string     `json:"name"`
+	Revision   int        `json:"revision"`
+	Outline    []Point    `json:"outline"`
+	Layers     []string   `json:"layers"`
+	Nets       []Net      `json:"nets"`
+	Pads       []Pad      `json:"pads"`
+	Traces     []Trace    `json:"traces"`
+	Vias       []Via      `json:"vias"`
+	Assemblies []Assembly `json:"assemblies"`
+}
+
+// Assembly is one stuffing variant of the same board: the copper and via
+// geometry is shared verbatim, but elements listed in Exclude (optional
+// jumpers, do-not-populate parts) are treated as not mounted, so they
+// neither conduct nor bridge anything in that variant.
+type Assembly struct {
+	ID      string   `json:"id"`
+	Name    string   `json:"name"`
+	Exclude []string `json:"exclude"` // element ids not mounted here
 }
 
 func (b *Board) netName(id string) string {

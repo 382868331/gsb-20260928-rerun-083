@@ -29,6 +29,7 @@ func (s *server) putBoard(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return
 	}
+	normalizeLogged(&b, "save")
 	b.Revision = s.board.Revision + 1
 	if err := s.st.save(&b); err != nil {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
@@ -48,10 +49,31 @@ func (s *server) checkBoard(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 400, map[string]string{"error": err.Error()})
 			return
 		}
+		normalizeLogged(&posted, "check")
 		b = &posted
 	}
-	rp := AnalyzeBoard(b)
-	writeJSON(w, 200, map[string]any{"errors": rp.Errors, "netStatus": rp.NetStatus})
+	asmID := r.URL.Query().Get("asm")
+	rp := AnalyzeAssembly(b, asmID)
+	writeJSON(w, 200, map[string]any{
+		"errors": rp.Errors, "netStatus": rp.NetStatus, "assembly": asmID,
+	})
+}
+
+// compareAssemblies re-checks every stuffing variant of the posted (or
+// saved) board against the same shared geometry and reports nets that
+// short or open only under some variants.
+func (s *server) compareAssemblies(w http.ResponseWriter, r *http.Request) {
+	b := s.board
+	if r.ContentLength > 0 {
+		var posted Board
+		if err := json.NewDecoder(r.Body).Decode(&posted); err != nil {
+			writeJSON(w, 400, map[string]string{"error": err.Error()})
+			return
+		}
+		normalizeLogged(&posted, "compare")
+		b = &posted
+	}
+	writeJSON(w, 200, CompareAssemblies(b))
 }
 
 func (s *server) exportBoard(w http.ResponseWriter, r *http.Request) {
@@ -68,6 +90,7 @@ func (s *server) importBoard(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return
 	}
+	normalizeLogged(&b, "import")
 	b.Revision = s.board.Revision + 1
 	if err := s.st.save(&b); err != nil {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
@@ -100,6 +123,8 @@ func main() {
 		if err := st.save(board); err != nil {
 			log.Printf("warn: cannot persist demo board: %v", err)
 		}
+	} else {
+		normalizeLogged(board, "load")
 	}
 	s := &server{st: st, board: board}
 
@@ -107,6 +132,7 @@ func main() {
 	mux.HandleFunc("GET /api/board", s.getBoard)
 	mux.HandleFunc("PUT /api/board", s.putBoard)
 	mux.HandleFunc("POST /api/board/check", s.checkBoard)
+	mux.HandleFunc("POST /api/board/assemblies/compare", s.compareAssemblies)
 	mux.HandleFunc("GET /api/board/export", s.exportBoard)
 	mux.HandleFunc("POST /api/board/import", s.importBoard)
 	mux.HandleFunc("POST /api/board/reset", s.resetBoard)

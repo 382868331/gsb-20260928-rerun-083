@@ -15,6 +15,7 @@ export interface Board {
   id: string; name: string; revision: number
   outline: Point[]; layers: string[]
   nets: Net[]; pads: Pad[]; traces: Trace[]; vias: Via[]
+  assemblies: Assembly[]
 }
 export interface CheckError {
   type: 'open' | 'short'; message: string
@@ -38,6 +39,28 @@ export interface NetStatus {
   shortedWith: string[]
   elements: string[]
 }
-export interface CheckReport { errors: CheckError[]; netStatus: NetStatus[] }
+export interface CheckReport { errors: CheckError[]; netStatus: NetStatus[]; assembly?: string }
 export type Tool = 'select' | 'trace' | 'pad' | 'via' | 'outline'
 export interface Sel { kind: 'pad' | 'trace' | 'via'; id: string }
+
+export interface Assembly {
+  id: string
+  name: string
+  exclude: string[] // element ids not mounted in this variant
+}
+export interface NetVariantState {
+  assemblyId: string
+  assemblyName: string
+  state: 'connected' | 'open' | 'short'
+}
+export interface VariantDiff {
+  netId: string
+  netName: string
+  kind: 'short' | 'open'
+  onlyIn: string[]
+  states: NetVariantState[]
+}
+export interface CompareResult {
+  reports: Record<string, CheckReport>
+  diffs: VariantDiff[]
+}
