@@ -51,6 +51,8 @@ export interface CheckReport {
 }
 export interface VariantReport {
   variantId: string; name: string; revision: number
+  status?: 'ok' | 'empty' | 'incomplete'
+  warnings?: string[]
   errors: CheckError[]; netStatus: NetStatus[]
 }
 export interface NetDiff {
@@ -60,6 +62,11 @@ export interface NetDiff {
 }
 export interface CompareReport {
   revision: number; variants: VariantReport[]; diff: NetDiff[]
+  warnings?: string[]
+}
+export interface NetPathReport {
+  variantId: string; netId: string; revision: number
+  state: string; steps: PathStep[]
 }
 export type Tool = 'select' | 'trace' | 'pad' | 'via' | 'outline' | 'jumper'
 export interface Sel { kind: 'pad' | 'trace' | 'via' | 'jumper'; id: string }

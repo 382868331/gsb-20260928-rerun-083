@@ -80,7 +80,15 @@ type Report struct {
 // AnalyzeBoard returns both located errors and the connectivity summary.
 func AnalyzeBoard(b *Board) Report {
 	a := buildAnalysis(b)
-	return Report{Errors: checkAnalysis(a), NetStatus: summaryOf(b, a)}
+	errs := checkAnalysis(a)
+	if errs == nil {
+		errs = []CheckError{}
+	}
+	ns := summaryOf(b, a)
+	if ns == nil {
+		ns = []NetStatus{}
+	}
+	return Report{Errors: errs, NetStatus: ns}
 }
 
 // NetSummary derives each named net's state purely from geometry.

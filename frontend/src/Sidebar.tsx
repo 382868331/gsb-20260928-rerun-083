@@ -1,8 +1,8 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api } from './api'
-import { normalizeBoard } from './normalize'
-import { MM, uid, useStore } from './store'
-import type { NetStatus, Tool } from './types'
+import { normalizeBoard, normalizeCompare } from './normalize'
+import { compareKeyOf, MM, uid, useStore } from './store'
+import type { NetPathReport, NetStatus, PathStep, Tool } from './types'
 
 const TOOLS: { id: Tool; label: string }[] = [
   { id: 'select', label: '选择/移动' },
@@ -22,6 +22,7 @@ export default function Sidebar() {
   // the board is still loading — returning early above them breaks the
   // hook sequence and kills the whole canvas on first load.
   const firstRun = useRef(true)
+  const [netPathView, setNetPathView] = useState<{ rep: NetPathReport; frozen: boolean } | null>(null)
   useEffect(() => {
     if (!b) return
     if (firstRun.current) { firstRun.current = false; return }
@@ -72,8 +73,9 @@ export default function Sidebar() {
 
   const compareAll = () =>
     run(async () => {
-      const rep = await api.compareVariants(b)
-      s.set({ compare: rep })
+      const rep = normalizeCompare(await api.compareVariants(b))
+      s.setCompare(rep, b)
+      setNetPathView(null)
     }, '已比较 ' + (b.variants.length + 1) + ' 个装配方案 (修订 ' + b.revision + ')')
   const exportJson = () => {
     const blob = new Blob([JSON.stringify(b, null, 2)], { type: 'application/json' })
@@ -100,7 +102,7 @@ export default function Sidebar() {
 
   // Diff the latest per-net states against those remembered before the
   // last edit: surfaces exactly which nets opened, shorted or recovered.
-  const stateLabel: Record<string, string> = { connected: '连通', open: '开路', short: '短路' }
+  const stateLabel: Record<string, string> = { connected: '连通', open: '开路', short: '短路', empty: '没有可用路径' }
   const prevMap = new Map(s.lastStatus.map((n) => [n.netId, n.state]))
   const transitionOf = (n: NetStatus): string => {
     const prev = prevMap.get(n.netId)
@@ -130,6 +132,39 @@ export default function Sidebar() {
   const mmInput = (v: number, cb: (n: number) => void) => (
     <input type="number" step={0.1} value={+(v / MM).toFixed(3)}
       onChange={(e) => cb(Math.round(parseFloat(e.target.value || '0') * MM))} />
+  )
+
+  // A stored compare is stale once the board (geometry, revision or any
+  // variant's assembly selection) no longer matches the frozen basis.
+  const compareStale = s.compare !== null && s.compareKey !== null && s.compareKey !== compareKeyOf(b)
+
+  const variantVerdict = (v: { status?: string; warnings?: string[]; errors: unknown[] }) => {
+    if (v.status === 'incomplete') return '资料缺失: ' + (v.warnings ?? []).join('; ')
+    if (v.status === 'empty') return '没有可用路径 (该方案无导电元素)'
+    return v.errors.length === 0 ? '无故障' : v.errors.length + ' 个问题'
+  }
+
+  // Fault/connection paths are always traced on a stated basis: the
+  // frozen report board or the current one — never silently swapped.
+  const showNetPath = (netId: string, variantId: string, useCurrent: boolean) =>
+    run(async () => {
+      const basis = !useCurrent && s.compareBoard ? s.compareBoard : b
+      const rep = await api.netPath(basis, variantId, netId)
+      setNetPathView({ rep, frozen: basis !== b })
+    }, '已获取导通路径')
+
+  const stepsList = (steps: PathStep[]) => (
+    <ol className="steps">
+      {steps.map((st, j) => (
+        <li key={j} className={st.kind} onClick={() => focusError(st.x, st.y)}>
+          {st.kind === 'element' ? (
+            <>{j === 0 ? '' : '└ '}<b>{st.id}</b> [{st.netName}] @ {st.layer} <span className="small">({(st.x / MM).toFixed(2)}, {(st.y / MM).toFixed(2)}) mm</span></>
+          ) : (
+            <span className="hop">↳ {st.layer} 层接触/间隙 @ ({(st.x / MM).toFixed(2)}, {(st.y / MM).toFixed(2)}) mm</span>
+          )}
+        </li>
+      ))}
+    </ol>
   )
 
   return (
@@ -209,6 +244,31 @@ export default function Sidebar() {
       {s.compare && (
         <div className="group">
           <h2>方案间差异 (修订 {s.compare.revision})</h2>
+          {compareStale && !s.compareFrozen && (
+            <div className="row small status">
+              报告依据已过期: 板在比较后被修改 (当前修订 {b.revision})。
+              <div className="row">
+                <button onClick={() => s.set({ compareFrozen: true })}>保留冻结结果</button>
+                <button className="primary" onClick={compareAll}>对当前板重新比较</button>
+              </div>
+            </div>
+          )}
+          {compareStale && s.compareFrozen && (
+            <div className="row small status">
+              已保留冻结结果, 依据修订 {s.compare.revision} (旧修订), 与当前板 (修订 {b.revision}) 不同。
+              <button className="linkbtn" onClick={compareAll}>对当前板重新比较</button>
+            </div>
+          )}
+          {(s.compare.warnings ?? []).length > 0 && (
+            <div className="row small status">板资料部分缺失: {(s.compare.warnings ?? []).join('; ')}</div>
+          )}
+          <div className="small">
+            {s.compare.variants.map((v) => (
+              <div key={v.variantId} className="row small">
+                {v.name}: {variantVerdict(v)} (修订 {v.revision})
+              </div>
+            ))}
+          </div>
           {s.compare.diff.length === 0 && <div className="row small">各方案网络状态一致</div>}
           {s.compare.diff.map((d) => (
             <div key={d.netId} className="netst">
@@ -220,8 +280,40 @@ export default function Sidebar() {
                   <div key={v.variantId}>{v.name}: {stateLabel[d.states[v.variantId]] ?? d.states[v.variantId]}</div>
                 ))}
               </div>
+              {(() => {
+                const onlyConnected = s.compare!.variants.filter((v) => d.states[v.variantId] === 'connected')
+                if (onlyConnected.length !== 1) return null
+                const v = onlyConnected[0]
+                return (
+                  <button className="linkbtn"
+                    onClick={() => showNetPath(d.netId, v.variantId, !(compareStale || s.compareFrozen))}>
+                    查看仅在 {v.name} 导通的路径
+                  </button>
+                )
+              })()}
             </div>
           ))}
+          {netPathView && (
+            <div className="netst">
+              <b>导通路径: {netPathView.rep.netId} · {variantName(netPathView.rep.variantId)}</b>
+              <div className="row small">
+                {netPathView.frozen
+                  ? '该路径来自旧修订 (修订 ' + netPathView.rep.revision + '), 非当前几何'
+                  : '依据当前几何 (修订 ' + netPathView.rep.revision + ')'}
+                {netPathView.frozen && (
+                  <button className="linkbtn"
+                    onClick={() => showNetPath(netPathView.rep.netId, netPathView.rep.variantId, true)}>
+                    对当前几何重新查看
+                  </button>
+                )}
+                <button className="linkbtn" onClick={() => setNetPathView(null)}>收起</button>
+              </div>
+              {netPathView.rep.state !== 'connected' && (
+                <div className="row small">该网络在此方案中为 {stateLabel[netPathView.rep.state] ?? netPathView.rep.state}, 无完整导通路径</div>
+              )}
+              {stepsList(netPathView.rep.steps ?? [])}
+            </div>
+          )}
         </div>
       )}
 

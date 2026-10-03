@@ -71,6 +71,8 @@ type VariantReport struct {
 	VariantID string       `json:"variantId"`
 	Name      string       `json:"name"`
 	Revision  int          `json:"revision"`
+	Status    string       `json:"status"` // "ok" | "empty" | "incomplete"
+	Warnings  []string     `json:"warnings"`
 	Errors    []CheckError `json:"errors"`
 	NetStatus []NetStatus  `json:"netStatus"`
 }
@@ -92,6 +94,50 @@ type CompareReport struct {
 	Revision int             `json:"revision"`
 	Variants []VariantReport `json:"variants"`
 	Diff     []NetDiff       `json:"diff"`
+	Warnings []string        `json:"warnings"`
+}
+
+// variantWarnings lists assembly selections that reference board
+// objects which do not exist (anymore): the variant can still be
+// analyzed, but its basis is incomplete and the report must say so
+// instead of silently ignoring the dangling ids.
+func variantWarnings(b *Board, v *Variant) []string {
+	w := []string{}
+	if v == nil {
+		return w
+	}
+	pads := map[string]bool{}
+	for _, p := range b.Pads {
+		pads[p.ID] = true
+	}
+	for _, id := range v.DNP {
+		if !pads[id] {
+			w = append(w, "方案 "+v.ID+" 的未装器件 "+id+" 在板上不存在, 已忽略")
+		}
+	}
+	jumpers := map[string]bool{}
+	for _, j := range b.Jumpers {
+		jumpers[j.ID] = true
+	}
+	for _, id := range v.Jumpers {
+		if !jumpers[id] {
+			w = append(w, "方案 "+v.ID+" 的跳线 "+id+" 在板上不存在, 已忽略")
+		}
+	}
+	return w
+}
+
+// variantStatus classifies one variant's result so the UI can tell
+// "no faults found" apart from "no conductive path available at all"
+// and "assembly data incomplete".
+func variantStatus(vb *Board, warnings []string) string {
+	if len(warnings) > 0 {
+		return "incomplete"
+	}
+	if len(vb.Pads) == 0 && len(vb.Traces) == 0 && len(vb.Vias) == 0 {
+		return "empty"
+	}
+	return "ok"
 }
 
 // CompareVariants analyzes the base assembly plus every declared
@@ -110,13 +156,22 @@ func CompareVariants(b *Board) CompareReport {
 		}
 		slots = append(slots, slot{v.ID, name})
 	}
-	rep := CompareReport{Revision: b.Revision}
+	rep := CompareReport{
+		Revision: b.Revision,
+		Variants: []VariantReport{},
+		Diff:     []NetDiff{},
+		Warnings: []string{},
+	}
 	stateOf := map[string]map[string]string{}
 	nameOf := map[string]string{}
 	for _, s := range slots {
-		r := AnalyzeVariant(b, s.id)
+		v := variantOf(b, s.id)
+		warnings := variantWarnings(b, v)
+		vb := boardForVariant(b, v)
+		r := AnalyzeBoard(vb)
 		vr := VariantReport{
 			VariantID: s.id, Name: s.name, Revision: b.Revision,
+			Status: variantStatus(vb, warnings), Warnings: warnings,
 			Errors: r.Errors, NetStatus: r.NetStatus,
 		}
 		rep.Variants = append(rep.Variants, vr)
@@ -137,7 +192,7 @@ func CompareVariants(b *Board) CompareReport {
 		states := stateOf[id]
 		first := states[slots[0].id]
 		same := true
-		var onlyOpen, onlyShort []string
+		onlyOpen, onlyShort := []string{}, []string{}
 		for _, s := range slots {
 			st := states[s.id]
 			if st != first {

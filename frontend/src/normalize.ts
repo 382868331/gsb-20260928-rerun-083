@@ -1,4 +1,4 @@
-import type { Board, Jumper, Pad, Point, Trace, Variant, Via } from './types'
+import type { Board, CompareReport, Jumper, Pad, Point, Trace, Variant, Via } from './types'
 
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
 const isStr = (v: unknown): v is string => typeof v === 'string'
@@ -146,3 +146,38 @@ export function normalizeBoard(raw: unknown): { board: Board; warnings: string[]
   return { board, warnings }
 }
 
+// normalizeCompare repairs a compare report whose lists may arrive as
+// null (empty Go slices) so the sidebar can always read .length; one
+// broken variant entry never takes the whole report — or the page —
+// down with it.
+export function normalizeCompare(raw: unknown): CompareReport {
+  const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
+  const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : [])
+  const strs = (v: unknown): string[] => arr(v).filter((x): x is string => typeof x === 'string')
+  const variants = arr(r.variants).map((v) => {
+    const o = (v ?? {}) as Record<string, unknown>
+    return {
+      variantId: typeof o.variantId === 'string' ? o.variantId : '',
+      name: typeof o.name === 'string' ? o.name : String(o.variantId ?? ''),
+      revision: typeof o.revision === 'number' ? o.revision : 0,
+      status: o.status === 'empty' || o.status === 'incomplete' ? o.status : 'ok' as const,
+      warnings: strs(o.warnings),
+      errors: arr(o.errors),
+      netStatus: arr(o.netStatus),
+    }
+  }) as CompareReport['variants']
+  const diff = arr(r.diff).map((d) => {
+    const o = (d ?? {}) as Record<string, unknown>
+    return {
+      netId: typeof o.netId === 'string' ? o.netId : '',
+      netName: typeof o.netName === 'string' ? o.netName : '',
+      states: (o.states && typeof o.states === 'object' ? o.states : {}) as Record<string, string>,
+      onlyOpen: strs(o.onlyOpen),
+      onlyShort: strs(o.onlyShort),
+    }
+  })
+  return {
+    revision: typeof r.revision === 'number' ? r.revision : 0,
+    variants, diff, warnings: strs(r.warnings),
+  }
+}

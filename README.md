@@ -55,6 +55,13 @@ cd backend && go test ./...
   局部移动、删除过孔/铜线、撤销重做及改层改网络后 200ms 自动复核,
   并与编辑前状态对比, 标注每个网络“已断开/新发生短路/已恢复连通”。
 - **撤销/重做**: 前端保存板子快照历史 (Ctrl+Z / Ctrl+Y)。
+- **方案比较与冻结依据**: 比较报告绑定所用板修订与每个方案的装配
+  选择 (dnp/jumpers); 报告打开后移动过孔、改跳线或撤销都会被识别为
+  依据过期, 可保留冻结结果或对当前板重新比较, 不会悄悄替换依据。
+  每个方案的结果区分 无故障 / 没有可用路径 (empty) / 资料缺失
+  (incomplete, 如引用了不存在的器件或跳线), 单个方案异常不影响其他
+  方案与当前板的检查、保存。只在某一方案中导通的网络可逐段查看其
+  铜线/过孔/已装器件路径, 并标明路径来自当前几何还是旧修订。
 - **保存/导出/导入**: `PUT /api/board` 持久化到 `backend/data/board.json`;
   导出/导入为完整 JSON, 元件 ID 原样保留 (`TestExportImportPreservesIdentity`)。
 - **验证板**: 内置示例板含跨层交叉 (同网络名但不连通, 报开路) 与
@@ -68,6 +75,7 @@ cd backend && go test ./...
 | PUT | /api/board | 保存 (修订号自增) |
 | POST | /api/board/check | 检查 (可带未保存的板子; 支持 {board, variantId} 按方案复核) |
 | POST | /api/board/variants/compare | 比较全部装配方案, 报告方案间网络差异 |
+| POST | /api/board/netpath | 单网络在某方案中的逐段导通路径 ({board, variantId, netId}) |
 | GET | /api/board/export | 导出 JSON |
 | POST | /api/board/import | 导入 JSON (保留 ID) |
 | POST | /api/board/reset | 重置为验证板 |

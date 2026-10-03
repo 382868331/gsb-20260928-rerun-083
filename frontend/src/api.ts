@@ -1,4 +1,4 @@
-import type { Board, CheckReport, CompareReport } from './types'
+import type { Board, CheckReport, CompareReport, NetPathReport } from './types'
 
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
   const r = await fetch(url, init)
@@ -16,6 +16,8 @@ export const api = {
     req<CheckReport>('/api/board/check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ board: b, variantId }) }),
   compareVariants: (b: Board) =>
     req<CompareReport>('/api/board/variants/compare', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }),
+  netPath: (b: Board, variantId: string, netId: string) =>
+    req<NetPathReport>('/api/board/netpath', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ board: b, variantId, netId }) }),
   importBoard: (b: unknown) =>
     req<Board>('/api/board/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }),
   resetBoard: () => req<Board>('/api/board/reset', { method: 'POST' }),

@@ -138,7 +138,7 @@ func buildSteps(b *Board, elemNet map[string]string, path []string, ats []fpt, h
 		}
 		return id, b.netName(id)
 	}
-	var steps []PathStep
+	steps := []PathStep{}
 	for i, id := range path {
 		nid, nname := disp(elemNet[id])
 		// ats are hop contact points, indexed by the hop they lead into:

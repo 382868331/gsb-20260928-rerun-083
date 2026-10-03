@@ -8,6 +8,19 @@ export const uid = (p: string) =>
 
 const clone = (b: Board): Board => JSON.parse(JSON.stringify(b))
 
+// compareKeyOf binds a compare report to its exact basis: the board
+// revision plus every variant's own assembly selection. Moving a via,
+// toggling a jumper or undoing an edit changes the board identity, so
+// a stored report can be flagged stale instead of silently standing in
+// for the new geometry.
+export const compareKeyOf = (b: Board): string =>
+  b.revision + '|' + b.variants.map((v) => v.id + ':' + [...v.dnp].sort().join(',') + '+' + [...v.jumpers].sort().join(',')).join(';') + '|' + fingerprint(b)
+
+// Geometry is not revision-tracked client-side (unsaved edits keep the
+// same revision number), so fingerprint the conductive geometry too.
+const fingerprint = (b: Board): string =>
+  JSON.stringify([b.pads, b.traces, b.vias, b.jumpers])
+
 interface State {
   board: Board | null
   past: Board[]
@@ -27,6 +40,9 @@ interface State {
   variantId: string
   reportFor: { variantId: string; revision: number } | null
   compare: CompareReport | null
+  compareBoard: Board | null
+  compareKey: string | null
+  compareFrozen: boolean
   status: string
   view: { zoom: number; panX: number; panY: number }
   pathError: CheckError | null
@@ -40,6 +56,7 @@ interface State {
   setView: (v: { zoom: number; panX: number; panY: number }) => void
   setReport: (r: { errors: CheckError[]; netStatus: NetStatus[] }, remember: boolean) => void
   setVariant: (id: string) => void
+  setCompare: (rep: CompareReport, basis: Board) => void
 }
 
 export const useStore = create<State>((set, get) => ({
@@ -61,6 +78,9 @@ export const useStore = create<State>((set, get) => ({
   variantId: '',
   reportFor: null,
   compare: null,
+  compareBoard: null,
+  compareKey: null,
+  compareFrozen: false,
   status: '',
   pathError: null,
   view: { zoom: 1, panX: 60, panY: 40 },
@@ -76,6 +96,9 @@ export const useStore = create<State>((set, get) => ({
       variantId: '',
       reportFor: null,
       compare: null,
+      compareBoard: null,
+      compareKey: null,
+      compareFrozen: false,
       pathError: null,
       selected: null,
       draft: [],
@@ -121,14 +144,19 @@ export const useStore = create<State>((set, get) => ({
   // show which nets just broke / shorted / recovered after a local edit.
   setReport: (r, remember) =>
     set((st) => ({
-      errors: r.errors,
-      netStatus: r.netStatus,
+      errors: r.errors ?? [],
+      netStatus: r.netStatus ?? [],
       lastStatus: remember ? st.netStatus : st.lastStatus,
       pathError: null,
     })),
-  // Switching variants clears the previous verdict so the next render
-  // can never show one variant's conclusions under another's name; the
-  // sidebar effect immediately re-checks the newly selected variant.
+  // Switching variants clears the previous single-variant verdict so the
+  // next render can never show one variant's conclusions under another's
+  // name; the compare report stays — it names every variant explicitly
+  // and is flagged stale by compareKey once the board itself changes.
   setVariant: (id) =>
-    set({ variantId: id, errors: [], netStatus: [], lastStatus: [], reportFor: null, compare: null, pathError: null }),
+    set({ variantId: id, errors: [], netStatus: [], lastStatus: [], reportFor: null, pathError: null }),
+  // Freezes the exact board the compare ran against, so later edits can
+  // be detected and fault paths can still be traced on the old revision.
+  setCompare: (rep, basis) =>
+    set({ compare: rep, compareBoard: clone(basis), compareKey: compareKeyOf(basis), compareFrozen: false }),
 }))

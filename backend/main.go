@@ -89,15 +89,71 @@ func (s *server) checkBoard(w http.ResponseWriter, r *http.Request) {
 // which nets are shorted/open only under specific assembly options.
 func (s *server) compareVariants(w http.ResponseWriter, r *http.Request) {
 	b := s.board
+	warnings := []string{}
 	if r.ContentLength > 0 {
-		var posted Board
-		if err := json.NewDecoder(r.Body).Decode(&posted); err != nil {
+		data, err := io.ReadAll(r.Body)
+		if err != nil {
 			writeJSON(w, 400, map[string]string{"error": err.Error()})
 			return
 		}
+		var posted Board
+		if err := json.Unmarshal(data, &posted); err != nil {
+			writeJSON(w, 400, map[string]string{"error": err.Error()})
+			return
+		}
+		warnings = missingSections(data)
+		sanitizeBoard(&posted)
 		b = &posted
 	}
-	writeJSON(w, 200, CompareVariants(b))
+	rep := CompareVariants(b)
+	rep.Warnings = append(rep.Warnings, warnings...)
+	writeJSON(w, 200, rep)
+}
+
+// missingSections names the board sections absent from a posted
+// document, so a compare/check report can flag that its basis was
+// partially missing instead of looking like a clean bill of health.
+func missingSections(data []byte) []string {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return []string{"板资料不是有效的 JSON 对象"}
+	}
+	out := []string{}
+	for _, f := range []string{"outline", "layers", "nets", "pads", "traces", "vias", "jumpers", "variants"} {
+		if _, ok := raw[f]; !ok {
+			out = append(out, "字段 "+f+" 缺失, 已按空列表/默认值处理")
+		}
+	}
+	return out
+}
+
+// netPathEnvelope asks for the conductive route of one net inside one
+// assembly variant of a posted board revision.
+type netPathEnvelope struct {
+	Board     *Board `json:"board"`
+	VariantID string `json:"variantId"`
+	NetID     string `json:"netId"`
+}
+
+// netPath returns the segment-by-segment route a net uses in one
+// variant (copper traces, vias, installed jumpers/components), so the
+// UI can show why a net conducts only under a specific assembly.
+func (s *server) netPath(w http.ResponseWriter, r *http.Request) {
+	var env netPathEnvelope
+	if err := json.NewDecoder(r.Body).Decode(&env); err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	if env.Board == nil || env.NetID == "" {
+		writeJSON(w, 400, map[string]string{"error": "需要 board 与 netId"})
+		return
+	}
+	sanitizeBoard(env.Board)
+	state, steps := NetPath(env.Board, env.VariantID, env.NetID)
+	writeJSON(w, 200, map[string]any{
+		"variantId": env.VariantID, "netId": env.NetID,
+		"revision": env.Board.Revision, "state": state, "steps": steps,
+	})
 }
 
 func (s *server) exportBoard(w http.ResponseWriter, r *http.Request) {
@@ -155,6 +211,7 @@ func main() {
 	mux.HandleFunc("PUT /api/board", s.putBoard)
 	mux.HandleFunc("POST /api/board/check", s.checkBoard)
 	mux.HandleFunc("POST /api/board/variants/compare", s.compareVariants)
+	mux.HandleFunc("POST /api/board/netpath", s.netPath)
 	mux.HandleFunc("GET /api/board/export", s.exportBoard)
 	mux.HandleFunc("POST /api/board/import", s.importBoard)
 	mux.HandleFunc("POST /api/board/reset", s.resetBoard)
