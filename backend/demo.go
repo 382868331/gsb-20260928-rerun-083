@@ -53,5 +53,17 @@ func demoBoard() *Board {
 			{ID: "via-sig", NetID: "net-sig", X: 50 * mm, Y: 15 * mm,
 				Diameter: 1.2 * mm, Drill: 600_000, Layers: []string{"top", "bottom"}},
 		},
+		// Optional jumper bridging the 0.1 mm GND gap; only installed in
+		// variant B, so GND is open in the base assembly and connected
+		// there. Variant C depopulates the VCC through-hole pad instead.
+		Jumpers: []Jumper{
+			{ID: "jumper-gnd", NetID: "net-gnd", Layer: "top", Width: 400_000,
+				Points: []Point{pt(28, 25), pt(29.05, 25)}},
+		},
+		Variants: []Variant{
+			{ID: "var-a", Name: "方案A 全装配", DNP: []string{}, Jumpers: []string{}},
+			{ID: "var-b", Name: "方案B 跳线修复", DNP: []string{}, Jumpers: []string{"jumper-gnd"}},
+			{ID: "var-c", Name: "方案C 免VCC器件", DNP: []string{"pad-vcc-th"}, Jumpers: []string{"jumper-gnd"}},
+		},
 	}
 }

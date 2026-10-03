@@ -48,16 +48,39 @@ type Via struct {
 	Layers   []string `json:"layers"`
 }
 
+// Jumper is an optional conductive link (跳线). Its copper exists only in
+// assembly variants that list it as installed; geometry lives on the
+// board so every variant reasons about the same coordinates.
+type Jumper struct {
+	ID     string  `json:"id"`
+	NetID  string  `json:"netId"`
+	Layer  string  `json:"layer"`
+	Width  int64   `json:"width"`
+	Points []Point `json:"points"`
+}
+
+// Variant is one assembly option (装配方案): which pads are left
+// unpopulated (DNP) and which optional jumpers are installed. Copper
+// traces and vias are shared by all variants and never duplicated here.
+type Variant struct {
+	ID      string   `json:"id"`
+	Name    string   `json:"name"`
+	DNP     []string `json:"dnp"`     // pad ids not populated in this variant
+	Jumpers []string `json:"jumpers"` // jumper ids installed in this variant
+}
+
 type Board struct {
-	ID       string   `json:"id"`
-	Name     string   `json:"name"`
-	Revision int      `json:"revision"`
-	Outline  []Point  `json:"outline"`
-	Layers   []string `json:"layers"`
-	Nets     []Net    `json:"nets"`
-	Pads     []Pad    `json:"pads"`
-	Traces   []Trace  `json:"traces"`
-	Vias     []Via    `json:"vias"`
+	ID       string    `json:"id"`
+	Name     string    `json:"name"`
+	Revision int       `json:"revision"`
+	Outline  []Point   `json:"outline"`
+	Layers   []string  `json:"layers"`
+	Nets     []Net     `json:"nets"`
+	Pads     []Pad     `json:"pads"`
+	Traces   []Trace   `json:"traces"`
+	Vias     []Via     `json:"vias"`
+	Jumpers  []Jumper  `json:"jumpers"`
+	Variants []Variant `json:"variants"`
 }
 
 func (b *Board) netName(id string) string {

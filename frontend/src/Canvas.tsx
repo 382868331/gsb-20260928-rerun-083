@@ -54,6 +54,12 @@ export default function Canvas() {
         bb.traces.push({ id: uid('trace'), netId: st.netId, layer: st.layer, width: st.traceWidth, points: pts })
       })
       st.set({ draft: [] })
+    } else if (st.tool === 'jumper' && st.draft.length >= 2) {
+      const pts = st.draft
+      st.commit((bb) => {
+        bb.jumpers.push({ id: uid('jumper'), netId: st.netId, layer: st.layer, width: st.traceWidth, points: pts })
+      })
+      st.set({ draft: [] })
     } else if (st.tool === 'outline' && st.draft.length >= 3) {
       const pts = st.draft
       st.commit((bb) => { bb.outline = pts })
@@ -69,6 +75,7 @@ export default function Canvas() {
       if (sel.kind === 'pad') bb.pads = bb.pads.filter((p) => p.id !== sel.id)
       if (sel.kind === 'trace') bb.traces = bb.traces.filter((t) => t.id !== sel.id)
       if (sel.kind === 'via') bb.vias = bb.vias.filter((v) => v.id !== sel.id)
+      if (sel.kind === 'jumper') bb.jumpers = bb.jumpers.filter((j) => j.id !== sel.id)
     })
     st.set({ selected: null })
   }
@@ -91,7 +98,7 @@ export default function Canvas() {
       return
     }
     if (e.button !== 0 || !b) return
-    if (s.tool === 'trace' || s.tool === 'outline') {
+    if (s.tool === 'trace' || s.tool === 'outline' || s.tool === 'jumper') {
       const p = toBoardInt(e)
       s.set({ draft: [...s.draft, p] })
     } else if (s.tool === 'pad') {
@@ -116,7 +123,7 @@ export default function Canvas() {
     }
   }
 
-  const onElemPointerDown = (e: React.PointerEvent, kind: 'pad' | 'trace' | 'via', id: string) => {
+  const onElemPointerDown = (e: React.PointerEvent, kind: 'pad' | 'trace' | 'via' | 'jumper', id: string) => {
     if (s.tool !== 'select' || e.button !== 0 || !b) return
     e.stopPropagation()
     s.set({ selected: { kind, id } })
@@ -139,6 +146,9 @@ export default function Canvas() {
         const p = nb.pads.find((x) => x.id === sel.id); if (p) { p.x = Math.round(p.x + dx); p.y = Math.round(p.y + dy) }
       } else if (sel.kind === 'via') {
         const v = nb.vias.find((x) => x.id === sel.id); if (v) { v.x = Math.round(v.x + dx); v.y = Math.round(v.y + dy) }
+      } else if (sel.kind === 'jumper') {
+        const j = nb.jumpers.find((x) => x.id === sel.id)
+        if (j) j.points = j.points.map((p) => ({ x: Math.round(p.x + dx), y: Math.round(p.y + dy) }))
       } else {
         const t = nb.traces.find((x) => x.id === sel.id)
         if (t) t.points = t.points.map((p) => ({ x: Math.round(p.x + dx), y: Math.round(p.y + dy) }))
@@ -164,6 +174,9 @@ export default function Canvas() {
   const selId = s.selected?.id
   const inactive = (l: string) => (l === s.layer ? 1 : 0.3)
   const pts = (ps: Point[]) => ps.map((p) => `${p.x},${p.y}`).join(' ')
+  const activeVariant = b.variants.find((v) => v.id === s.variantId)
+  const installedJumpers = new Set(activeVariant?.jumpers ?? [])
+  const dnpPads = new Set(activeVariant?.dnp ?? [])
 
   return (
     <div className="canvas">
@@ -205,11 +218,27 @@ export default function Canvas() {
               <circle cx={v.x} cy={v.y} r={v.drill / 2} fill="#111" />
             </g>
           ))}
+          {b.jumpers.map((j) => {
+            const on = installedJumpers.has(j.id)
+            return (
+              <polyline key={j.id} points={pts(j.points)} fill="none"
+                stroke={on ? '#ffca28' : '#888'}
+                strokeWidth={on ? j.width : Math.max(j.width * 0.5, 0.2 * MM)}
+                strokeLinecap="round"
+                strokeDasharray={on ? undefined : `${0.8 * MM} ${0.5 * MM}`}
+                opacity={on ? 0.95 : 0.5}
+                style={{ pointerEvents: s.tool === 'select' ? 'auto' : 'none', cursor: 'move' }}
+                onPointerDown={(e) => onElemPointerDown(e, 'jumper', j.id)} />
+            )
+          })}
           {b.pads.map((p) => {
+            const dnp = dnpPads.has(p.id)
             const col = p.layer === 'through' ? '#c9a227' : layerColor(p.layer, b.layers.indexOf(p.layer))
             const common = {
-              fill: col, opacity: p.layer === 'through' ? 1 : inactive(p.layer),
-              stroke: selId === p.id ? '#fff' : 'none', strokeWidth: 0.25 * MM,
+              fill: dnp ? '#666' : col,
+              opacity: dnp ? 0.3 : p.layer === 'through' ? 1 : inactive(p.layer),
+              stroke: selId === p.id ? '#fff' : dnp ? '#ff9100' : 'none',
+              strokeWidth: selId === p.id || dnp ? 0.25 * MM : 0,
               style: { pointerEvents: s.tool === 'select' ? ('auto' as const) : ('none' as const), cursor: 'move' },
               onPointerDown: (e: React.PointerEvent) => onElemPointerDown(e, 'pad', p.id),
             }
@@ -220,7 +249,7 @@ export default function Canvas() {
             )
           })}
           {s.draft.length > 0 && (
-            <polyline points={pts(cursor && (s.tool === 'trace' || s.tool === 'outline') ? [...s.draft, cursor] : s.draft)}
+            <polyline points={pts(cursor && (s.tool === 'trace' || s.tool === 'outline' || s.tool === 'jumper') ? [...s.draft, cursor] : s.draft)}
               fill="none" stroke="#ffca28" strokeWidth={s.tool === 'trace' ? s.traceWidth : 0.3 * MM}
               strokeLinecap="round" strokeDasharray={s.tool === 'outline' ? `${0.5 * MM} ${0.3 * MM}` : undefined} pointerEvents="none" />
           )}

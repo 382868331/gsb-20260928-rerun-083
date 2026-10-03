@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Board, CheckError, NetStatus, Point, Sel, Tool } from './types'
+import type { Board, CheckError, CompareReport, NetStatus, Point, Sel, Tool } from './types'
 
 export const MM = 1_000_000
 
@@ -24,6 +24,9 @@ interface State {
   errors: CheckError[]
   netStatus: NetStatus[]
   lastStatus: NetStatus[]
+  variantId: string
+  reportFor: { variantId: string; revision: number } | null
+  compare: CompareReport | null
   status: string
   view: { zoom: number; panX: number; panY: number }
   pathError: CheckError | null
@@ -36,6 +39,7 @@ interface State {
   redo: () => void
   setView: (v: { zoom: number; panX: number; panY: number }) => void
   setReport: (r: { errors: CheckError[]; netStatus: NetStatus[] }, remember: boolean) => void
+  setVariant: (id: string) => void
 }
 
 export const useStore = create<State>((set, get) => ({
@@ -54,6 +58,9 @@ export const useStore = create<State>((set, get) => ({
   errors: [],
   netStatus: [],
   lastStatus: [],
+  variantId: '',
+  reportFor: null,
+  compare: null,
   status: '',
   pathError: null,
   view: { zoom: 1, panX: 60, panY: 40 },
@@ -66,6 +73,9 @@ export const useStore = create<State>((set, get) => ({
       errors: [],
       netStatus: [],
       lastStatus: [],
+      variantId: '',
+      reportFor: null,
+      compare: null,
       pathError: null,
       selected: null,
       draft: [],
@@ -116,4 +126,9 @@ export const useStore = create<State>((set, get) => ({
       lastStatus: remember ? st.netStatus : st.lastStatus,
       pathError: null,
     })),
+  // Switching variants clears the previous verdict so the next render
+  // can never show one variant's conclusions under another's name; the
+  // sidebar effect immediately re-checks the newly selected variant.
+  setVariant: (id) =>
+    set({ variantId: id, errors: [], netStatus: [], lastStatus: [], reportFor: null, compare: null, pathError: null }),
 }))

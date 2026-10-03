@@ -1,13 +1,15 @@
 import { useEffect, useRef } from 'react'
 import { api } from './api'
+import { normalizeBoard } from './normalize'
 import { MM, uid, useStore } from './store'
-import type { CheckReport, NetStatus, Tool } from './types'
+import type { NetStatus, Tool } from './types'
 
 const TOOLS: { id: Tool; label: string }[] = [
   { id: 'select', label: '选择/移动' },
   { id: 'trace', label: '铜线' },
   { id: 'pad', label: '焊盘' },
   { id: 'via', label: '过孔' },
+  { id: 'jumper', label: '跳线' },
   { id: 'outline', label: '板框' },
 ]
 
@@ -15,28 +17,10 @@ export default function Sidebar() {
   const s = useStore()
   const b = s.board
   const fileRef = useRef<HTMLInputElement>(null)
-  if (!b) return <aside className="sidebar" />
 
-  const run = async (fn: () => Promise<void>, ok: string) => {
-    try { await fn() } catch (e) { s.set({ status: '错误: ' + (e as Error).message }) ; return }
-    s.set({ status: ok })
-  }
-
-  const save = () => run(async () => { const nb = await api.saveBoard(b); useStore.setState({ board: nb }) }, '已保存 (修订 ' + (b.revision + 1) + ')')
-  const doCheck = async (remember = false) => {
-    try {
-      const r: CheckReport = await api.checkBoard(b)
-      s.setReport(r, remember)
-      const n = r.errors.length
-      s.set({ status: n === 0 ? '即时复核: 无开路/短路' : `即时复核: 发现 ${n} 个问题` })
-    } catch (e) {
-      s.set({ status: '复核失败: ' + (e as Error).message })
-    }
-  }
-
-  // Instant re-verification after every local edit (place/move/delete,
-  // undo/redo, layer or net change). Board coordinates are integer nm and
-  // checks are geometry-only, so zoom level never affects the verdict.
+  // Hooks must run in the same order on every render, including while
+  // the board is still loading — returning early above them breaks the
+  // hook sequence and kills the whole canvas on first load.
   const firstRun = useRef(true)
   useEffect(() => {
     if (!b) return
@@ -44,7 +28,53 @@ export default function Sidebar() {
     const h = setTimeout(() => { doCheck(true) }, 200)
     return () => clearTimeout(h)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [b])
+  }, [b, s.variantId])
+
+  if (!b) {
+    return (
+      <aside className="sidebar">
+        <h1>电路板工作台</h1>
+        {s.status && <div className="row small status">{s.status}</div>}
+      </aside>
+    )
+  }
+
+  const run = async (fn: () => Promise<void>, ok: string) => {
+    try { await fn() } catch (e) { s.set({ status: '错误: ' + (e as Error).message }) ; return }
+    s.set({ status: ok })
+  }
+
+  const save = () => run(async () => { const nb = await api.saveBoard(b); useStore.setState({ board: nb }) }, '已保存 (修订 ' + (b.revision + 1) + ')')
+
+  const variantName = (id: string) =>
+    id === '' ? '基准 (全部装配, 无跳线)' : (b.variants.find((v) => v.id === id)?.name ?? id)
+
+  // Re-checks the CURRENT board revision against the CURRENT variant.
+  // The response is applied only when both are still current, so a slow
+  // reply from a previous variant or pre-edit revision is discarded
+  // instead of overwriting fresh conclusions.
+  const doCheck = async (remember = false) => {
+    const board = useStore.getState().board
+    if (!board) return
+    const variantId = useStore.getState().variantId
+    try {
+      const r = await api.checkVariant(board, variantId)
+      const st = useStore.getState()
+      if (st.board !== board || st.variantId !== variantId) return
+      s.setReport(r, remember)
+      s.set({ reportFor: { variantId, revision: board.revision } })
+      const n = r.errors.length
+      s.set({ status: `${variantName(variantId)}: ${n === 0 ? '无开路/短路' : `发现 ${n} 个问题`} (修订 ${board.revision})` })
+    } catch (e) {
+      s.set({ status: '复核失败: ' + (e as Error).message })
+    }
+  }
+
+  const compareAll = () =>
+    run(async () => {
+      const rep = await api.compareVariants(b)
+      s.set({ compare: rep })
+    }, '已比较 ' + (b.variants.length + 1) + ' 个装配方案 (修订 ' + b.revision + ')')
   const exportJson = () => {
     const blob = new Blob([JSON.stringify(b, null, 2)], { type: 'application/json' })
     const a = document.createElement('a')
@@ -55,9 +85,10 @@ export default function Sidebar() {
   }
   const importJson = (f: File) =>
     run(async () => {
-      const parsed = JSON.parse(await f.text())
+      const { board: parsed, warnings } = normalizeBoard(JSON.parse(await f.text()))
       const nb = await api.importBoard(parsed)
       s.setBoard(nb)
+      if (warnings.length) s.set({ status: '导入文件部分缺失, 已保留其余内容: ' + warnings.join('; ') })
     }, '导入完成, 元件身份已保留')
   const reset = () => run(async () => s.setBoard(await api.resetBoard()), '已重置为验证板')
 
@@ -85,6 +116,16 @@ export default function Sidebar() {
   const selPad = sel?.kind === 'pad' ? b.pads.find((p) => p.id === sel.id) : undefined
   const selTrace = sel?.kind === 'trace' ? b.traces.find((t) => t.id === sel.id) : undefined
   const selVia = sel?.kind === 'via' ? b.vias.find((v) => v.id === sel.id) : undefined
+  const selJumper = sel?.kind === 'jumper' ? b.jumpers.find((j) => j.id === sel.id) : undefined
+
+  const activeVariant = b.variants.find((v) => v.id === s.variantId)
+  const toggleVariantList = (field: 'dnp' | 'jumpers', id: string, on: boolean) =>
+    s.commit((bb) => {
+      const v = bb.variants.find((x) => x.id === s.variantId)
+      if (!v) return
+      const list = v[field]
+      v[field] = on ? [...list, id] : list.filter((x) => x !== id)
+    })
 
   const mmInput = (v: number, cb: (n: number) => void) => (
     <input type="number" step={0.1} value={+(v / MM).toFixed(3)}
@@ -103,8 +144,12 @@ export default function Sidebar() {
           <button onClick={s.redo} disabled={!s.future.length}>重做</button>
         </div>
         <div className="row">
-          <button className="primary" onClick={() => doCheck()}>检查连通/短路</button>
+          <button className="primary" onClick={() => doCheck()}>检查当前方案</button>
+          <button onClick={compareAll}>比较各方案</button>
         </div>
+        {s.reportFor && (
+          <div className="row small">结果对应: {variantName(s.reportFor.variantId)} · 修订 {s.reportFor.revision}</div>
+        )}
         <div className="row">
           <button onClick={exportJson}>导出</button>
           <button onClick={() => fileRef.current?.click()}>导入</button>
@@ -114,6 +159,71 @@ export default function Sidebar() {
         </div>
         {s.status && <div className="row small status">{s.status}</div>}
       </div>
+
+      <div className="group">
+        <h2>装配方案</h2>
+        <label>当前方案
+          <select value={s.variantId} onChange={(e) => s.setVariant(e.target.value)}>
+            <option value="">基准 (全部装配, 无跳线)</option>
+            {b.variants.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+          </select>
+        </label>
+        <div className="row">
+          <button onClick={() => {
+            const name = prompt('新方案名称')
+            if (name) s.commit((bb) => { bb.variants.push({ id: uid('var'), name, dnp: [], jumpers: [] }) })
+          }}>+ 方案</button>
+          {activeVariant && (
+            <button onClick={() => {
+              if (confirm('删除方案 ' + activeVariant.name + '?')) {
+                s.commit((bb) => { bb.variants = bb.variants.filter((v) => v.id !== activeVariant.id) })
+                s.setVariant('')
+              }
+            }}>删除方案</button>
+          )}
+        </div>
+        {activeVariant ? (
+          <>
+            {b.jumpers.length > 0 && <div className="row small">跳线 (安装后改变导电路径):</div>}
+            {b.jumpers.map((j) => (
+              <label key={j.id} className="chk">
+                <input type="checkbox" checked={activeVariant.jumpers.includes(j.id)}
+                  onChange={(e) => toggleVariantList('jumpers', j.id, e.target.checked)} />
+                安装 {j.id}
+              </label>
+            ))}
+            {b.pads.length > 0 && <div className="row small">器件 (不安装则从导电中移除):</div>}
+            {b.pads.map((p) => (
+              <label key={p.id} className="chk">
+                <input type="checkbox" checked={activeVariant.dnp.includes(p.id)}
+                  onChange={(e) => toggleVariantList('dnp', p.id, e.target.checked)} />
+                不装 {p.id}
+              </label>
+            ))}
+          </>
+        ) : (
+          <div className="row small">基准视图: 全部器件已装, 跳线不导通; 选择方案后可配置跳线与未安装器件</div>
+        )}
+      </div>
+
+      {s.compare && (
+        <div className="group">
+          <h2>方案间差异 (修订 {s.compare.revision})</h2>
+          {s.compare.diff.length === 0 && <div className="row small">各方案网络状态一致</div>}
+          {s.compare.diff.map((d) => (
+            <div key={d.netId} className="netst">
+              <b>{d.netName}</b>
+              {d.onlyShort.length > 0 && <div className="small">仅在 {d.onlyShort.map(variantName).join('、')} 短路</div>}
+              {d.onlyOpen.length > 0 && <div className="small">仅在 {d.onlyOpen.map(variantName).join('、')} 断开</div>}
+              <div className="small">
+                {s.compare!.variants.map((v) => (
+                  <div key={v.variantId}>{v.name}: {stateLabel[d.states[v.variantId]] ?? d.states[v.variantId]}</div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       <div className="group">
         <h2>工具</h2>
@@ -163,15 +273,16 @@ export default function Sidebar() {
         </div>
       </div>
 
-      {sel && (selPad || selTrace || selVia) && (
+      {sel && (selPad || selTrace || selVia || selJumper) && (
         <div className="group">
-          <h2>选中: {selPad ? '焊盘' : selTrace ? '铜线' : '过孔'} {(selPad ?? selTrace ?? selVia)!.id}</h2>
+          <h2>选中: {selPad ? '焊盘' : selTrace ? '铜线' : selVia ? '过孔' : '跳线'} {(selPad ?? selTrace ?? selVia ?? selJumper)!.id}</h2>
           <label>网络
-            <select value={(selPad ?? selTrace ?? selVia)!.netId}
+            <select value={(selPad ?? selTrace ?? selVia ?? selJumper)!.netId}
               onChange={(e) => s.commit((bb) => {
                 const it = sel.kind === 'pad' ? bb.pads.find((x) => x.id === sel.id)
                   : sel.kind === 'trace' ? bb.traces.find((x) => x.id === sel.id)
-                  : bb.vias.find((x) => x.id === sel.id)
+                  : sel.kind === 'via' ? bb.vias.find((x) => x.id === sel.id)
+                  : bb.jumpers.find((x) => x.id === sel.id)
                 if (it) it.netId = e.target.value
               })}>
               <option value="">(未命名铜皮)</option>
@@ -215,7 +326,7 @@ export default function Sidebar() {
 
       {s.netStatus.length > 0 && (
         <div className="group">
-          <h2>网络连通复核 ({s.netStatus.length})</h2>
+          <h2>网络连通复核 · {variantName(s.reportFor?.variantId ?? s.variantId)} ({s.netStatus.length})</h2>
           {s.netStatus.map((n) => (
             <div key={n.netId} className={'netst ' + n.state}>
               <b>{n.netName}</b>: {stateLabel[n.state] ?? n.state}

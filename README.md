@@ -26,6 +26,22 @@ cd backend && go test ./...
 
 - **坐标**: 全部为整数纳米 (nm) 的板级坐标; 界面缩放只是视图变换,
   几何判断与缩放无关 (`TestZoomIndependence`)。
+- **装配方案 (variants)**: 同一块板可声明多个装配方案
+  (`board.variants`), 每个方案只记录自己的元件选择 —— 未安装器件
+  (`dnp`, 按焊盘 id) 与已安装跳线 (`jumpers`, 按跳线 id)。
+  铜线与过孔几何在所有方案间共享同一份依据, 不复制。跳线
+  (`board.jumpers`) 是可选导电连接, 只有在方案中安装时才参与导通。
+  `POST /api/board/check` 接受 `{board, variantId}`, 每次调用都从
+  提交的板修订重新分析, 切换方案、移动过孔或撤销后不会沿用上一方案
+  的结论; `POST /api/board/variants/compare` 对基准视图与全部方案
+  逐一复核, 报告哪些网络只在某个方案中短接或断开 (`diff` 的
+  `onlyOpen`/`onlyShort`), 故障路径仍逐段列出经由的元件
+  (含跳线 id)。方案随板一起保存, 重开后可独立核对。
+- **局部缺失容忍**: 板资料缺少某些字段 (如 `pads`/`layers`/
+  `variants`) 或个别元件坐标非法时, 前端 `normalizeBoard` 与后端
+  `sanitizeBoard` 保留其余内容, 按空列表/默认层兜底, 并在状态栏
+  指出缺失位置 (如 `焊盘[2] (pad-x) 坐标缺失, 已跳过`),
+  不让整个画布失去响应。
 - **连通性按几何而非网络名**: 元素展开为各层铜皮形状 (圆/矩形/圆头线段),
   同层相交才合并; 过孔按声明层 (`via.layers`) 桥接, 通孔焊盘存在于所有层。
   跨层交叉不相连 (`TestCrossLayerCrossingNotConnected`)。
@@ -50,7 +66,8 @@ cd backend && go test ./...
 | --- | --- | --- |
 | GET | /api/board | 当前板 |
 | PUT | /api/board | 保存 (修订号自增) |
-| POST | /api/board/check | 检查 (可带未保存的板子) |
+| POST | /api/board/check | 检查 (可带未保存的板子; 支持 {board, variantId} 按方案复核) |
+| POST | /api/board/variants/compare | 比较全部装配方案, 报告方案间网络差异 |
 | GET | /api/board/export | 导出 JSON |
 | POST | /api/board/import | 导入 JSON (保留 ID) |
 | POST | /api/board/reset | 重置为验证板 |

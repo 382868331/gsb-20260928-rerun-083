@@ -11,10 +11,17 @@ export interface Via {
   id: string; netId: string; x: number; y: number
   diameter: number; drill: number; layers: string[]
 }
+export interface Jumper {
+  id: string; netId: string; layer: string; width: number; points: Point[]
+}
+export interface Variant {
+  id: string; name: string; dnp: string[]; jumpers: string[]
+}
 export interface Board {
   id: string; name: string; revision: number
   outline: Point[]; layers: string[]
   nets: Net[]; pads: Pad[]; traces: Trace[]; vias: Via[]
+  jumpers: Jumper[]; variants: Variant[]
 }
 export interface CheckError {
   type: 'open' | 'short'; message: string
@@ -38,6 +45,21 @@ export interface NetStatus {
   shortedWith: string[]
   elements: string[]
 }
-export interface CheckReport { errors: CheckError[]; netStatus: NetStatus[] }
-export type Tool = 'select' | 'trace' | 'pad' | 'via' | 'outline'
-export interface Sel { kind: 'pad' | 'trace' | 'via'; id: string }
+export interface CheckReport {
+  errors: CheckError[]; netStatus: NetStatus[]
+  variantId?: string; revision?: number
+}
+export interface VariantReport {
+  variantId: string; name: string; revision: number
+  errors: CheckError[]; netStatus: NetStatus[]
+}
+export interface NetDiff {
+  netId: string; netName: string
+  states: Record<string, string>
+  onlyOpen: string[]; onlyShort: string[]
+}
+export interface CompareReport {
+  revision: number; variants: VariantReport[]; diff: NetDiff[]
+}
+export type Tool = 'select' | 'trace' | 'pad' | 'via' | 'outline' | 'jumper'
+export interface Sel { kind: 'pad' | 'trace' | 'via' | 'jumper'; id: string }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -29,6 +30,7 @@ func (s *server) putBoard(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return
 	}
+	sanitizeBoard(&b)
 	b.Revision = s.board.Revision + 1
 	if err := s.st.save(&b); err != nil {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
@@ -38,9 +40,54 @@ func (s *server) putBoard(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, s.board)
 }
 
+// checkEnvelope lets the client ask for one assembly variant's verdict;
+// a bare Board body (no "board" field) is still accepted as before.
+type checkEnvelope struct {
+	Board     *Board `json:"board"`
+	VariantID string `json:"variantId"`
+}
+
 // checkBoard checks the board posted by the client (unsaved edits included);
-// falls back to the saved board when the body is empty.
+// falls back to the saved board when the body is empty. Each call rebuilds
+// the analysis from the posted revision, so switching variants, moving a
+// via or undoing an edit never reuses a previous variant's conclusions.
 func (s *server) checkBoard(w http.ResponseWriter, r *http.Request) {
+	b := s.board
+	variantID := ""
+	if r.ContentLength > 0 {
+		data, err := io.ReadAll(r.Body)
+		if err != nil {
+			writeJSON(w, 400, map[string]string{"error": err.Error()})
+			return
+		}
+		var env checkEnvelope
+		if err := json.Unmarshal(data, &env); err != nil {
+			writeJSON(w, 400, map[string]string{"error": err.Error()})
+			return
+		}
+		if env.Board != nil {
+			b = env.Board
+			variantID = env.VariantID
+		} else {
+			var posted Board
+			if err := json.Unmarshal(data, &posted); err != nil {
+				writeJSON(w, 400, map[string]string{"error": err.Error()})
+				return
+			}
+			b = &posted
+		}
+	}
+	rp := AnalyzeVariant(b, variantID)
+	writeJSON(w, 200, map[string]any{
+		"errors": rp.Errors, "netStatus": rp.NetStatus,
+		"variantId": variantID, "revision": b.Revision,
+	})
+}
+
+// compareVariants re-checks every assembly variant of the posted (or
+// saved) board against the same shared copper geometry and reports
+// which nets are shorted/open only under specific assembly options.
+func (s *server) compareVariants(w http.ResponseWriter, r *http.Request) {
 	b := s.board
 	if r.ContentLength > 0 {
 		var posted Board
@@ -50,8 +97,7 @@ func (s *server) checkBoard(w http.ResponseWriter, r *http.Request) {
 		}
 		b = &posted
 	}
-	rp := AnalyzeBoard(b)
-	writeJSON(w, 200, map[string]any{"errors": rp.Errors, "netStatus": rp.NetStatus})
+	writeJSON(w, 200, CompareVariants(b))
 }
 
 func (s *server) exportBoard(w http.ResponseWriter, r *http.Request) {
@@ -68,6 +114,7 @@ func (s *server) importBoard(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})
 		return
 	}
+	sanitizeBoard(&b)
 	b.Revision = s.board.Revision + 1
 	if err := s.st.save(&b); err != nil {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
@@ -107,6 +154,7 @@ func main() {
 	mux.HandleFunc("GET /api/board", s.getBoard)
 	mux.HandleFunc("PUT /api/board", s.putBoard)
 	mux.HandleFunc("POST /api/board/check", s.checkBoard)
+	mux.HandleFunc("POST /api/board/variants/compare", s.compareVariants)
 	mux.HandleFunc("GET /api/board/export", s.exportBoard)
 	mux.HandleFunc("POST /api/board/import", s.importBoard)
 	mux.HandleFunc("POST /api/board/reset", s.resetBoard)
