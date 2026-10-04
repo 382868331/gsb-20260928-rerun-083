@@ -76,6 +76,12 @@ export default function Sidebar() {
       const rep = normalizeCompare(await api.compareVariants(b))
       s.setCompare(rep, b)
       setNetPathView(null)
+      // Freeze the report with the project: re-checks append, old
+      // reports are kept server-side and survive save + refresh.
+      try {
+        const stored = await api.saveCompare({ key: compareKeyOf(b), report: rep, basis: b })
+        s.set({ savedCompares: [...useStore.getState().savedCompares, stored] })
+      } catch { /* 后端不支持报告存档时仅保留内存结果 */ }
     }, '已比较 ' + (b.variants.length + 1) + ' 个装配方案 (修订 ' + b.revision + ')')
   const exportJson = () => {
     const blob = new Blob([JSON.stringify(b, null, 2)], { type: 'application/json' })
@@ -312,6 +318,20 @@ export default function Sidebar() {
                 <div className="row small">该网络在此方案中为 {stateLabel[netPathView.rep.state] ?? netPathView.rep.state}, 无完整导通路径</div>
               )}
               {stepsList(netPathView.rep.steps ?? [])}
+            </div>
+          )}
+          {s.savedCompares.length > 0 && (
+            <div className="small">
+              已保存的比较报告 (随工程持久化, 重开可恢复):
+              {s.savedCompares.map((sc, i) => (
+                <div key={sc.id} className="row small">
+                  #{i + 1} · 修订 {sc.revision}
+                  {sc.key === s.compareKey ? ' (当前查看)' : (
+                    <button className="linkbtn" onClick={() => { s.restoreCompare(sc); setNetPathView(null) }}>查看</button>
+                  )}
+                  {sc.key !== compareKeyOf(b) && <span> · 依据已过期</span>}
+                </div>
+              ))}
             </div>
           )}
         </div>

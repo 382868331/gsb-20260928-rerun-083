@@ -58,6 +58,11 @@ cd backend && go test ./...
 - **方案比较与冻结依据**: 比较报告绑定所用板修订与每个方案的装配
   选择 (dnp/jumpers); 报告打开后移动过孔、改跳线或撤销都会被识别为
   依据过期, 可保留冻结结果或对当前板重新比较, 不会悄悄替换依据。
+  每次比较都把报告连同依据 (比较键 + 板快照) 持久化到
+  `backend/data/compares.json`, 保存刷新或服务重启后自动恢复最近
+  一份, 并依据存储的比较键识别当前板是否已变化 —— 旧修订路径不会
+  冒充当前几何; 重新比较追加新报告, 旧报告全部保留可回看。单份
+  报告损坏只跳过该份, 其余报告照常恢复。
   每个方案的结果区分 无故障 / 没有可用路径 (empty) / 资料缺失
   (incomplete, 如引用了不存在的器件或跳线), 单个方案异常不影响其他
   方案与当前板的检查、保存。只在某一方案中导通的网络可逐段查看其
@@ -75,6 +80,8 @@ cd backend && go test ./...
 | PUT | /api/board | 保存 (修订号自增) |
 | POST | /api/board/check | 检查 (可带未保存的板子; 支持 {board, variantId} 按方案复核) |
 | POST | /api/board/variants/compare | 比较全部装配方案, 报告方案间网络差异 |
+| GET | /api/board/compares | 列出随工程保存的冻结比较报告 (含依据快照) |
+| POST | /api/board/compares | 冻结一份比较报告及其依据; 重新比较追加而非覆盖 |
 | POST | /api/board/netpath | 单网络在某方案中的逐段导通路径 ({board, variantId, netId}) |
 | GET | /api/board/export | 导出 JSON |
 | POST | /api/board/import | 导入 JSON (保留 ID) |

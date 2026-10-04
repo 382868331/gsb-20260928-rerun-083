@@ -10,8 +10,9 @@ import (
 )
 
 type server struct {
-	st    *store
-	board *Board
+	st       *store
+	compares *compareStore
+	board    *Board
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
@@ -191,6 +192,38 @@ func (s *server) resetBoard(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, s.board)
 }
 
+// listCompares returns every frozen compare report saved with the
+// project, oldest first, so a reopened session can recover them all
+// even when one entry is damaged.
+func (s *server) listCompares(w http.ResponseWriter, r *http.Request) {
+	list, warnings, err := s.compares.loadAll()
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": err.Error()})
+		return
+	}
+	if warnings == nil {
+		warnings = []string{}
+	}
+	writeJSON(w, 200, map[string]any{"compares": list, "warnings": warnings})
+}
+
+// saveCompare freezes a compare report together with its basis (the
+// compare key and the full board snapshot). Re-checking appends a new
+// entry; previous reports are never overwritten.
+func (s *server) saveCompare(w http.ResponseWriter, r *http.Request) {
+	var sc StoredCompare
+	if err := json.NewDecoder(r.Body).Decode(&sc); err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	stored, err := s.compares.append(sc)
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, 200, stored)
+}
+
 func main() {
 	dataPath := os.Getenv("PCB_DATA")
 	if dataPath == "" {
@@ -204,13 +237,15 @@ func main() {
 			log.Printf("warn: cannot persist demo board: %v", err)
 		}
 	}
-	s := &server{st: st, board: board}
+	s := &server{st: st, compares: newCompareStore(dataPath), board: board}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/board", s.getBoard)
 	mux.HandleFunc("PUT /api/board", s.putBoard)
 	mux.HandleFunc("POST /api/board/check", s.checkBoard)
 	mux.HandleFunc("POST /api/board/variants/compare", s.compareVariants)
+	mux.HandleFunc("GET /api/board/compares", s.listCompares)
+	mux.HandleFunc("POST /api/board/compares", s.saveCompare)
 	mux.HandleFunc("POST /api/board/netpath", s.netPath)
 	mux.HandleFunc("GET /api/board/export", s.exportBoard)
 	mux.HandleFunc("POST /api/board/import", s.importBoard)

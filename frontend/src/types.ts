@@ -64,6 +64,17 @@ export interface CompareReport {
   revision: number; variants: VariantReport[]; diff: NetDiff[]
   warnings?: string[]
 }
+// StoredCompare is a frozen compare report persisted with the project:
+// the report itself, the compare key it was computed under, and a full
+// snapshot of the basis board, so it can be re-opened — and recognized
+// as stale — after the live board has moved on.
+export interface StoredCompare {
+  id: string
+  key: string
+  revision: number
+  report: CompareReport
+  basis: Board
+}
 export interface NetPathReport {
   variantId: string; netId: string; revision: number
   state: string; steps: PathStep[]

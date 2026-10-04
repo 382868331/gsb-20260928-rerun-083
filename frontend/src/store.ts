@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Board, CheckError, CompareReport, NetStatus, Point, Sel, Tool } from './types'
+import type { Board, CheckError, CompareReport, NetStatus, Point, Sel, StoredCompare, Tool } from './types'
 
 export const MM = 1_000_000
 
@@ -43,6 +43,7 @@ interface State {
   compareBoard: Board | null
   compareKey: string | null
   compareFrozen: boolean
+  savedCompares: StoredCompare[]
   status: string
   view: { zoom: number; panX: number; panY: number }
   pathError: CheckError | null
@@ -57,6 +58,7 @@ interface State {
   setReport: (r: { errors: CheckError[]; netStatus: NetStatus[] }, remember: boolean) => void
   setVariant: (id: string) => void
   setCompare: (rep: CompareReport, basis: Board) => void
+  restoreCompare: (sc: StoredCompare) => void
 }
 
 export const useStore = create<State>((set, get) => ({
@@ -81,6 +83,7 @@ export const useStore = create<State>((set, get) => ({
   compareBoard: null,
   compareKey: null,
   compareFrozen: false,
+  savedCompares: [],
   status: '',
   pathError: null,
   view: { zoom: 1, panX: 60, panY: 40 },
@@ -159,4 +162,14 @@ export const useStore = create<State>((set, get) => ({
   // be detected and fault paths can still be traced on the old revision.
   setCompare: (rep, basis) =>
     set({ compare: rep, compareBoard: clone(basis), compareKey: compareKeyOf(basis), compareFrozen: false }),
+  // Restores a report persisted with the project. The stored key (not a
+  // freshly computed one) decides staleness, so an old revision can
+  // never impersonate the current geometry after a reopen.
+  restoreCompare: (sc) =>
+    set({
+      compare: sc.report,
+      compareBoard: clone(sc.basis),
+      compareKey: sc.key,
+      compareFrozen: false,
+    }),
 }))
