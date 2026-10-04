@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Board, CheckError, CompareReport, NetStatus, Point, Sel, Tool } from './types'
+import type { Board, CheckError, CompareReport, NetStatus, Point, Sel, StoredCompare, Tool } from './types'
 
 export const MM = 1_000_000
 
@@ -8,13 +8,15 @@ export const uid = (p: string) =>
 
 const clone = (b: Board): Board => JSON.parse(JSON.stringify(b))
 
-// compareKeyOf binds a compare report to its exact basis: the board
-// revision plus every variant's own assembly selection. Moving a via,
-// toggling a jumper or undoing an edit changes the board identity, so
-// a stored report can be flagged stale instead of silently standing in
-// for the new geometry.
+// compareKeyOf binds a compare report to its exact basis: every
+// variant's own assembly selection plus the conductive geometry.
+// Moving a via, toggling a jumper or undoing an edit changes the board
+// identity, so a stored report can be flagged stale instead of silently
+// standing in for the new geometry. The revision number is deliberately
+// excluded: undoing back to identical geometry and saving (which bumps
+// the revision) must still be recognized as "the board has not changed".
 export const compareKeyOf = (b: Board): string =>
-  b.revision + '|' + b.variants.map((v) => v.id + ':' + [...v.dnp].sort().join(',') + '+' + [...v.jumpers].sort().join(',')).join(';') + '|' + fingerprint(b)
+  b.variants.map((v) => v.id + ':' + [...v.dnp].sort().join(',') + '+' + [...v.jumpers].sort().join(',')).join(';') + '|' + fingerprint(b)
 
 // Geometry is not revision-tracked client-side (unsaved edits keep the
 // same revision number), so fingerprint the conductive geometry too.
@@ -43,6 +45,8 @@ interface State {
   compareBoard: Board | null
   compareKey: string | null
   compareFrozen: boolean
+  compares: StoredCompare[]
+  activeCompareId: string | null
   status: string
   view: { zoom: number; panX: number; panY: number }
   pathError: CheckError | null
@@ -57,6 +61,8 @@ interface State {
   setReport: (r: { errors: CheckError[]; netStatus: NetStatus[] }, remember: boolean) => void
   setVariant: (id: string) => void
   setCompare: (rep: CompareReport, basis: Board) => void
+  setCompares: (list: StoredCompare[]) => void
+  restoreCompare: (sc: StoredCompare) => void
 }
 
 export const useStore = create<State>((set, get) => ({
@@ -81,6 +87,8 @@ export const useStore = create<State>((set, get) => ({
   compareBoard: null,
   compareKey: null,
   compareFrozen: false,
+  compares: [],
+  activeCompareId: null,
   status: '',
   pathError: null,
   view: { zoom: 1, panX: 60, panY: 40 },
@@ -99,6 +107,8 @@ export const useStore = create<State>((set, get) => ({
       compareBoard: null,
       compareKey: null,
       compareFrozen: false,
+      compares: [],
+      activeCompareId: null,
       pathError: null,
       selected: null,
       draft: [],
@@ -158,5 +168,18 @@ export const useStore = create<State>((set, get) => ({
   // Freezes the exact board the compare ran against, so later edits can
   // be detected and fault paths can still be traced on the old revision.
   setCompare: (rep, basis) =>
-    set({ compare: rep, compareBoard: clone(basis), compareKey: compareKeyOf(basis), compareFrozen: false }),
+    set({ compare: rep, compareBoard: clone(basis), compareKey: compareKeyOf(basis), compareFrozen: false, activeCompareId: rep.id ?? null }),
+  setCompares: (list) => set({ compares: list }),
+  // Restores a report that was persisted with the project (e.g. after a
+  // reload). The frozen basis comes along, so staleness against the
+  // current board is computed exactly as for a fresh compare, and fault
+  // paths on the old revision stay traceable — labelled as such.
+  restoreCompare: (sc) =>
+    set({
+      compare: sc.report,
+      compareBoard: sc.basis ? clone(sc.basis) : null,
+      compareKey: sc.basis ? compareKeyOf(sc.basis) : null,
+      compareFrozen: true,
+      activeCompareId: sc.id,
+    }),
 }))

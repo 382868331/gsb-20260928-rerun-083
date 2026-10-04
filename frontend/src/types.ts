@@ -61,8 +61,20 @@ export interface NetDiff {
   onlyOpen: string[]; onlyShort: string[]
 }
 export interface CompareReport {
+  id?: string; key?: string
   revision: number; variants: VariantReport[]; diff: NetDiff[]
   warnings?: string[]
+}
+// StoredCompare is a frozen compare report persisted with the project,
+// together with the exact board revision it was computed from.
+export interface StoredCompare {
+  id: string; revision: number; key: string
+  current?: boolean
+  report: CompareReport
+  basis: Board | null
+}
+export interface CompareListResponse {
+  revision: number; key: string; reports: StoredCompare[]
 }
 export interface NetPathReport {
   variantId: string; netId: string; revision: number

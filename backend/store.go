@@ -19,6 +19,13 @@ func newStore(path string) *store { return &store{path: path} }
 // lists become empty lists and a board without a layer stack gets the
 // default two-layer stack. Existing content is kept verbatim.
 func sanitizeBoard(b *Board) {
+	sanitizeSections(b)
+	sanitizeCompares(b)
+}
+
+// sanitizeSections repairs the board's own sections (no compare
+// history); also used for each stored report's basis snapshot.
+func sanitizeSections(b *Board) {
 	if b.Outline == nil {
 		b.Outline = []Point{}
 	}
@@ -49,6 +56,40 @@ func sanitizeBoard(b *Board) {
 		}
 		if b.Variants[i].Jumpers == nil {
 			b.Variants[i].Jumpers = []string{}
+		}
+	}
+}
+
+// sanitizeCompares repairs each stored compare report independently, so
+// one entry with missing sections (absent report lists, a damaged basis
+// snapshot) never keeps the remaining reports from being recovered.
+func sanitizeCompares(b *Board) {
+	for i := range b.Compares {
+		c := &b.Compares[i]
+		if c.Report.Variants == nil {
+			c.Report.Variants = []VariantReport{}
+		}
+		if c.Report.Diff == nil {
+			c.Report.Diff = []NetDiff{}
+		}
+		if c.Report.Warnings == nil {
+			c.Report.Warnings = []string{}
+		}
+		for j := range c.Report.Variants {
+			v := &c.Report.Variants[j]
+			if v.Warnings == nil {
+				v.Warnings = []string{}
+			}
+			if v.Errors == nil {
+				v.Errors = []CheckError{}
+			}
+			if v.NetStatus == nil {
+				v.NetStatus = []NetStatus{}
+			}
+		}
+		if c.Basis != nil {
+			sanitizeSections(c.Basis)
+			c.Basis.Compares = nil
 		}
 	}
 }

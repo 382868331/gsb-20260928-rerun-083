@@ -91,6 +91,8 @@ type NetDiff struct {
 // CompareReport holds every variant's independent result plus the
 // cross-variant net diff.
 type CompareReport struct {
+	ID       string          `json:"id,omitempty"`  // set once the report is frozen/persisted
+	Key      string          `json:"key,omitempty"` // fingerprint of the basis board
 	Revision int             `json:"revision"`
 	Variants []VariantReport `json:"variants"`
 	Diff     []NetDiff       `json:"diff"`

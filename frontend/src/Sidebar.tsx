@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from './api'
-import { normalizeBoard, normalizeCompare } from './normalize'
+import { normalizeBoard, normalizeCompare, normalizeStoredCompares } from './normalize'
 import { compareKeyOf, MM, uid, useStore } from './store'
-import type { NetPathReport, NetStatus, PathStep, Tool } from './types'
+import type { NetPathReport, NetStatus, PathStep, StoredCompare, Tool } from './types'
 
 const TOOLS: { id: Tool; label: string }[] = [
   { id: 'select', label: '选择/移动' },
@@ -76,7 +76,26 @@ export default function Sidebar() {
       const rep = normalizeCompare(await api.compareVariants(b))
       s.setCompare(rep, b)
       setNetPathView(null)
+      // The backend froze and persisted this report; refresh the stored
+      // history so the new entry shows up alongside the old ones.
+      try {
+        const { reports } = normalizeStoredCompares(await api.listCompares())
+        s.setCompares(reports)
+      } catch { /* history refresh is best-effort */ }
     }, '已比较 ' + (b.variants.length + 1) + ' 个装配方案 (修订 ' + b.revision + ')')
+
+  // A stored report matches the current board iff its frozen basis has
+  // the same geometry and assembly selections (revision-independent).
+  const storedCurrent = (c: StoredCompare) =>
+    c.basis ? compareKeyOf(c.basis) === compareKeyOf(b) : (c.current ?? false)
+
+  const restoreStored = (c: StoredCompare) => {
+    s.restoreCompare(c)
+    setNetPathView(null)
+    s.set({ status: storedCurrent(c)
+      ? '已打开比较报告 (依据修订 ' + c.revision + '), 与当前板一致'
+      : '已打开比较报告 (依据修订 ' + c.revision + ', 旧修订), 与当前板不同' })
+  }
   const exportJson = () => {
     const blob = new Blob([JSON.stringify(b, null, 2)], { type: 'application/json' })
     const a = document.createElement('a')
@@ -314,6 +333,22 @@ export default function Sidebar() {
               {stepsList(netPathView.rep.steps ?? [])}
             </div>
           )}
+        </div>
+      )}
+
+      {s.compares.length > 0 && (
+        <div className="group">
+          <h2>已保存的比较报告 ({s.compares.length})</h2>
+          {s.compares.map((c, i) => (
+            <div key={c.id} className="row small">
+              <button className="linkbtn" onClick={() => restoreStored(c)}>
+                报告 {i + 1} · 依据修订 {c.revision}
+              </button>
+              <span>{storedCurrent(c) ? '与当前板一致' : '旧修订, 板已变化'}</span>
+              {s.activeCompareId === c.id && <span>(正在查看)</span>}
+            </div>
+          ))}
+          <div className="row small">报告随工程保存, 重开后可继续查看; 重新比较会生成新报告并保留旧报告</div>
         </div>
       )}
 

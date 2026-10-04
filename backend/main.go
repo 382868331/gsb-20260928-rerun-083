@@ -31,6 +31,11 @@ func (s *server) putBoard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sanitizeBoard(&b)
+	// Compare history is server-owned: a client save that does not
+	// carry it must not wipe the frozen reports stored with the project.
+	if len(b.Compares) == 0 {
+		b.Compares = s.board.Compares
+	}
 	b.Revision = s.board.Revision + 1
 	if err := s.st.save(&b); err != nil {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
@@ -107,7 +112,33 @@ func (s *server) compareVariants(w http.ResponseWriter, r *http.Request) {
 	}
 	rep := CompareVariants(b)
 	rep.Warnings = append(rep.Warnings, warnings...)
+	// Freeze the report together with its basis and persist it with the
+	// project, so a reload can recover it and re-comparison appends a new
+	// report instead of replacing the old ones. The saved board's own
+	// geometry is not touched — only its report history grows.
+	sc := newStoredCompare(b, rep)
+	rep = sc.Report
+	s.board.Compares = append(s.board.Compares, sc)
+	if err := s.st.save(s.board); err != nil {
+		rep.Warnings = append(rep.Warnings, "比较报告未能随工程保存: "+err.Error())
+	}
 	writeJSON(w, 200, rep)
+}
+
+// listCompares returns every frozen compare report stored with the
+// project, each annotated with whether its basis still matches the
+// current board, plus the current board's own key. Old reports are
+// kept verbatim — re-checking appends new ones, it never rewrites
+// history.
+func (s *server) listCompares(w http.ResponseWriter, r *http.Request) {
+	key := compareKeyOf(s.board)
+	reports := make([]compareListEntry, 0, len(s.board.Compares))
+	for _, c := range s.board.Compares {
+		reports = append(reports, compareListEntry{StoredCompare: c, Current: c.Key == key})
+	}
+	writeJSON(w, 200, map[string]any{
+		"revision": s.board.Revision, "key": key, "reports": reports,
+	})
 }
 
 // missingSections names the board sections absent from a posted
@@ -171,6 +202,9 @@ func (s *server) importBoard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sanitizeBoard(&b)
+	if len(b.Compares) == 0 {
+		b.Compares = s.board.Compares
+	}
 	b.Revision = s.board.Revision + 1
 	if err := s.st.save(&b); err != nil {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
@@ -211,6 +245,7 @@ func main() {
 	mux.HandleFunc("PUT /api/board", s.putBoard)
 	mux.HandleFunc("POST /api/board/check", s.checkBoard)
 	mux.HandleFunc("POST /api/board/variants/compare", s.compareVariants)
+	mux.HandleFunc("GET /api/board/compares", s.listCompares)
 	mux.HandleFunc("POST /api/board/netpath", s.netPath)
 	mux.HandleFunc("GET /api/board/export", s.exportBoard)
 	mux.HandleFunc("POST /api/board/import", s.importBoard)

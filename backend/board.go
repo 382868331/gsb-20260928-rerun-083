@@ -81,6 +81,11 @@ type Board struct {
 	Vias     []Via     `json:"vias"`
 	Jumpers  []Jumper  `json:"jumpers"`
 	Variants []Variant `json:"variants"`
+	// Compares is the frozen compare-report history, persisted with the
+	// project so a reload can recover past reports and tell whether the
+	// current board still matches their basis. Server-owned: a client
+	// PUT without this field keeps the stored history.
+	Compares []StoredCompare `json:"compares,omitempty"`
 }
 
 func (b *Board) netName(id string) string {

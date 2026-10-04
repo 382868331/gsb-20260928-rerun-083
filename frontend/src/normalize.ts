@@ -1,4 +1,4 @@
-import type { Board, CompareReport, Jumper, Pad, Point, Trace, Variant, Via } from './types'
+import type { Board, CompareReport, Jumper, Pad, Point, StoredCompare, Trace, Variant, Via } from './types'
 
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
 const isStr = (v: unknown): v is string => typeof v === 'string'
@@ -177,7 +177,46 @@ export function normalizeCompare(raw: unknown): CompareReport {
     }
   })
   return {
+    id: typeof r.id === 'string' ? r.id : undefined,
+    key: typeof r.key === 'string' ? r.key : undefined,
     revision: typeof r.revision === 'number' ? r.revision : 0,
     variants, diff, warnings: strs(r.warnings),
   }
+}
+
+// normalizeStoredCompares repairs the persisted compare-report history
+// one entry at a time: a single damaged entry (missing report, broken
+// basis snapshot) is skipped or degraded with a warning, while every
+// other report is recovered fully.
+export function normalizeStoredCompares(raw: unknown): { reports: StoredCompare[]; warnings: string[] } {
+  const warnings: string[] = []
+  const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
+  const list = Array.isArray(r.reports) ? r.reports : []
+  const reports: StoredCompare[] = []
+  list.forEach((e, i) => {
+    if (!e || typeof e !== 'object') {
+      warnings.push('比较报告[' + i + '] 资料缺失, 已跳过')
+      return
+    }
+    const o = e as Record<string, unknown>
+    let basis: Board | null = null
+    if (o.basis && typeof o.basis === 'object') {
+      try {
+        basis = normalizeBoard(o.basis).board
+      } catch {
+        warnings.push('比较报告[' + i + '] 的板依据无法恢复, 仅保留报告结果')
+      }
+    } else {
+      warnings.push('比较报告[' + i + '] 缺少板依据快照, 导通路径将按当前几何查看')
+    }
+    reports.push({
+      id: typeof o.id === 'string' ? o.id : 'cmp-' + i,
+      revision: typeof o.revision === 'number' ? o.revision : 0,
+      key: typeof o.key === 'string' ? o.key : '',
+      current: o.current === true,
+      report: normalizeCompare(o.report),
+      basis,
+    })
+  })
+  return { reports, warnings }
 }
