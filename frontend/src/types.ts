@@ -79,5 +79,36 @@ export interface NetPathReport {
   variantId: string; netId: string; revision: number
   state: string; steps: PathStep[]
 }
+// Repair solver (最小修复方案求解): the user states which nets must be
+// connected, which must never be shorted, and the allowed modifications
+// with per-mod cost and mutual-exclusion assembly conditions.
+export interface RepairMod {
+  id: string
+  kind: 'jumper' | 'populate' | 'dnp'
+  target: string
+  cost: number
+  excludes: string[]
+}
+export interface RepairSpec {
+  mustConnect: string[]
+  noShort: string[]
+  mods: RepairMod[]
+}
+export interface NetChange { netId: string; netName: string; from: string; to: string }
+export interface ModEffect { modId: string; cost: number; changes: NetChange[]; conflicts: string[] }
+export interface RepairSolution { mods: string[]; cost: number; changes: NetChange[]; netStatus: NetStatus[] }
+export interface RepairResult {
+  revision: number; variantId: string; key: string
+  warnings: string[]
+  solutions: RepairSolution[]
+  conflicts: string[]
+  modEffects: ModEffect[]
+}
+// StoredRepair freezes one solve round with its basis; old reports keep
+// representing their original revision, new checks are saved separately.
+export interface StoredRepair {
+  id: string; key: string; revision: number; variantId: string
+  spec: RepairSpec; result: RepairResult; basis: Board
+}
 export type Tool = 'select' | 'trace' | 'pad' | 'via' | 'outline' | 'jumper'
 export interface Sel { kind: 'pad' | 'trace' | 'via' | 'jumper'; id: string }

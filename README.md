@@ -67,6 +67,24 @@ cd backend && go test ./...
   (incomplete, 如引用了不存在的器件或跳线), 单个方案异常不影响其他
   方案与当前板的检查、保存。只在某一方案中导通的网络可逐段查看其
   铜线/过孔/已装器件路径, 并标明路径来自当前几何还是旧修订。
+- **受装配约束的最小修复求解**: 用户声明必须连通的网络
+  (`mustConnect`)、禁止短接的网络 (`noShort`) 与允许的改装项
+  (`mods`: 安装跳线 / 补装器件 / 移除器件, 各带成本与互斥改装 id
+  列表), `POST /api/repair/solve` 枚举所有满足互斥条件的组合,
+  逐一按真实板几何与当前装配重新分析, 返回满足全部电气约束的
+  最低总成本组合 (相同最低成本可给多个), 而不是只修复第一条开路。
+  除显式约束外还有不回退规则: 引入任何新短路或使原本连通的网络
+  断开的组合一律排除 —— 例如跳线经共享连接点桥到另一网络的铜皮
+  时, 该组合被拒绝并在 `conflicts` 中说明冲突。无解时返回一组
+  可复查的相互冲突要求 (含“没有任何组合能使 X 连通”等诊断)。
+  引用不存在的跳线/器件/网络的改装与要求只产生警告并视为不可用,
+  绝不当作检查通过。每项改装可单独预览其对各网络的影响
+  (`modEffects`, 另有 `POST /api/repair/preview` 试算任意组合);
+  确认后 `POST /api/repair/apply` 把整个组合一次性应用为新的装配
+  方案 —— 应用前按求解时的依据键 (板修订 + 几何 + 装配 + 需求)
+  重新核对, 期间任何修改都会使应用被拒绝 (409) 并要求重新求解。
+  每次求解冻结为一份修复报告存入 `backend/data/repairs.json`
+  (与比较报告分开), 旧报告继续代表原修订, 新检查单独追加保存。
 - **保存/导出/导入**: `PUT /api/board` 持久化到 `backend/data/board.json`;
   导出/导入为完整 JSON, 元件 ID 原样保留 (`TestExportImportPreservesIdentity`)。
 - **验证板**: 内置示例板含跨层交叉 (同网络名但不连通, 报开路) 与
@@ -86,3 +104,7 @@ cd backend && go test ./...
 | GET | /api/board/export | 导出 JSON |
 | POST | /api/board/import | 导入 JSON (保留 ID) |
 | POST | /api/board/reset | 重置为验证板 |
+| POST | /api/repair/solve | 求解最低成本改装组合 ({board, variantId, spec}), 并冻结报告 |
+| POST | /api/repair/preview | 预览任意改装组合对网络的影响 |
+| POST | /api/repair/apply | 核对依据键后一次应用整个组合为新装配方案 |
+| GET | /api/repair/reports | 列出随工程保存的求解报告 |

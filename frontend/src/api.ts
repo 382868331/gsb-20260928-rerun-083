@@ -1,4 +1,4 @@
-import type { Board, CheckReport, CompareReport, NetPathReport, StoredCompare } from './types'
+import type { Board, CheckReport, CompareReport, NetChange, NetPathReport, RepairResult, RepairSpec, StoredCompare, StoredRepair } from './types'
 
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
   const r = await fetch(url, init)
@@ -24,4 +24,11 @@ export const api = {
   importBoard: (b: unknown) =>
     req<Board>('/api/board/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }),
   resetBoard: () => req<Board>('/api/board/reset', { method: 'POST' }),
+  solveRepair: (b: Board, variantId: string, spec: RepairSpec) =>
+    req<{ result: RepairResult; reportId: string }>('/api/repair/solve', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ board: b, variantId, spec }) }),
+  previewRepair: (b: Board, variantId: string, spec: RepairSpec, mods: string[]) =>
+    req<{ pass: boolean; reasons: string[]; changes: NetChange[]; warnings: string[] }>('/api/repair/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ board: b, variantId, spec, mods }) }),
+  applyRepair: (b: Board, variantId: string, spec: RepairSpec, mods: string[], key: string) =>
+    req<{ board: Board; variantId: string; cost: number }>('/api/repair/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ board: b, variantId, spec, mods, key }) }),
+  listRepairs: () => req<{ repairs: StoredRepair[]; warnings: string[] }>('/api/repair/reports'),
 }

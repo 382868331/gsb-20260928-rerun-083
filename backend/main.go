@@ -2,16 +2,20 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 )
 
 type server struct {
 	st       *store
 	compares *compareStore
+	repairs  *repairStore
 	board    *Board
 }
 
@@ -192,6 +196,170 @@ func (s *server) resetBoard(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, s.board)
 }
 
+// solveEnvelope posts the board (unsaved edits included), the assembly
+// variant to repair and the requirement spec.
+type solveEnvelope struct {
+	Board     *Board     `json:"board"`
+	VariantID string     `json:"variantId"`
+	Spec      RepairSpec `json:"spec"`
+}
+
+// solveRepair searches the minimum-cost modification combinations and
+// freezes the round as a stored repair report; old reports keep
+// representing their own revision, new checks are appended separately.
+func (s *server) solveRepair(w http.ResponseWriter, r *http.Request) {
+	var env solveEnvelope
+	if err := json.NewDecoder(r.Body).Decode(&env); err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	b := s.board
+	if env.Board != nil {
+		b = env.Board
+	}
+	sanitizeBoard(b)
+	spec := env.Spec
+	if spec.MustConnect == nil {
+		spec.MustConnect = []string{}
+	}
+	if spec.NoShort == nil {
+		spec.NoShort = []string{}
+	}
+	if spec.Mods == nil {
+		spec.Mods = []RepairMod{}
+	}
+	res := SolveRepair(b, env.VariantID, &spec)
+	stored, err := s.repairs.append(StoredRepair{
+		Key: res.Key, VariantID: env.VariantID, Spec: spec, Result: res, Basis: *b,
+	})
+	if err == nil {
+		writeJSON(w, 200, map[string]any{"result": res, "reportId": stored.ID})
+	} else {
+		writeJSON(w, 200, map[string]any{"result": res, "reportId": ""})
+	}
+}
+
+// previewRepair evaluates one arbitrary combination of mods without
+// solving, so the user can inspect each modification's net impact
+// before confirming anything.
+func (s *server) previewRepair(w http.ResponseWriter, r *http.Request) {
+	var env struct {
+		Board     *Board     `json:"board"`
+		VariantID string     `json:"variantId"`
+		Spec      RepairSpec `json:"spec"`
+		Mods      []string   `json:"mods"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&env); err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	if env.Board == nil {
+		writeJSON(w, 400, map[string]string{"error": "需要 board"})
+		return
+	}
+	sanitizeBoard(env.Board)
+	usable, warnings := validateSpec(env.Board, &env.Spec)
+	spec := &RepairSpec{MustConnect: env.Spec.MustConnect, NoShort: env.Spec.NoShort, Mods: usable}
+	chosen := map[string]bool{}
+	for _, id := range env.Mods {
+		chosen[id] = true
+	}
+	base := netStateOf(AnalyzeVariant(env.Board, env.VariantID).NetStatus)
+	pass, reasons, changes, ns := evalCombo(env.Board, env.VariantID, spec, chosen, base)
+	writeJSON(w, 200, map[string]any{
+		"pass": pass, "reasons": reasons, "changes": changes,
+		"netStatus": ns, "warnings": warnings,
+		"revision": env.Board.Revision, "variantId": env.VariantID,
+	})
+}
+
+// applyRepair confirms one solved combination. The basis key is
+// recomputed from the posted board and spec: if the board revision,
+// geometry or assembly changed since the solve, the apply is refused
+// and the user must re-solve first. On success the combination becomes
+// a new assembly variant and the board is saved with a bumped revision.
+func (s *server) applyRepair(w http.ResponseWriter, r *http.Request) {
+	var env struct {
+		Board     *Board     `json:"board"`
+		VariantID string     `json:"variantId"`
+		Spec      RepairSpec `json:"spec"`
+		Mods      []string   `json:"mods"`
+		Key       string     `json:"key"`
+		Name      string     `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&env); err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	if env.Board == nil || env.Key == "" {
+		writeJSON(w, 400, map[string]string{"error": "需要 board 与求解依据 key"})
+		return
+	}
+	sanitizeBoard(env.Board)
+	spec := env.Spec
+	if spec.MustConnect == nil {
+		spec.MustConnect = []string{}
+	}
+	if spec.NoShort == nil {
+		spec.NoShort = []string{}
+	}
+	if spec.Mods == nil {
+		spec.Mods = []RepairMod{}
+	}
+	if key := repairKey(env.Board, env.VariantID, &spec); key != env.Key {
+		writeJSON(w, 409, map[string]string{"error": "板修订或装配在求解后已变化, 必须重新求解核对后才能应用"})
+		return
+	}
+	usable, warnings := validateSpec(env.Board, &spec)
+	if len(warnings) > 0 {
+		writeJSON(w, 409, map[string]string{"error": "改装资料不完整, 不能应用: " + strings.Join(warnings, "; ")})
+		return
+	}
+	chosen := map[string]bool{}
+	cost := 0
+	for _, m := range usable {
+		if containsStr(env.Mods, m.ID) {
+			chosen[m.ID] = true
+			cost += m.Cost
+		}
+	}
+	base := netStateOf(AnalyzeVariant(env.Board, env.VariantID).NetStatus)
+	pass, reasons, _, _ := evalCombo(env.Board, env.VariantID, &spec, chosen, base)
+	if !pass {
+		writeJSON(w, 409, map[string]string{"error": "组合复核未通过, 不能应用: " + strings.Join(reasons, "; ")})
+		return
+	}
+	asm := assemblyWithMods(env.Board, env.VariantID, usable, chosen)
+	name := env.Name
+	if name == "" {
+		name = "修复组合 (" + strings.Join(env.Mods, "+") + ")"
+	}
+	asm.ID = fmt.Sprintf("var-repair-%d", time.Now().UnixNano())
+	asm.Name = name
+	env.Board.Variants = append(env.Board.Variants, *asm)
+	env.Board.Revision = s.board.Revision + 1
+	if err := s.st.save(env.Board); err != nil {
+		writeJSON(w, 500, map[string]string{"error": err.Error()})
+		return
+	}
+	s.board = env.Board
+	writeJSON(w, 200, map[string]any{"board": s.board, "variantId": asm.ID, "cost": cost})
+}
+
+// listRepairs returns every frozen repair report saved with the
+// project, oldest first; a single damaged entry never costs the rest.
+func (s *server) listRepairs(w http.ResponseWriter, r *http.Request) {
+	list, warnings, err := s.repairs.loadAll()
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": err.Error()})
+		return
+	}
+	if warnings == nil {
+		warnings = []string{}
+	}
+	writeJSON(w, 200, map[string]any{"repairs": list, "warnings": warnings})
+}
+
 // listCompares returns every frozen compare report saved with the
 // project, oldest first, so a reopened session can recover them all
 // even when one entry is damaged.
@@ -237,7 +405,7 @@ func main() {
 			log.Printf("warn: cannot persist demo board: %v", err)
 		}
 	}
-	s := &server{st: st, compares: newCompareStore(dataPath), board: board}
+	s := &server{st: st, compares: newCompareStore(dataPath), repairs: newRepairStore(dataPath), board: board}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/board", s.getBoard)
@@ -250,6 +418,10 @@ func main() {
 	mux.HandleFunc("GET /api/board/export", s.exportBoard)
 	mux.HandleFunc("POST /api/board/import", s.importBoard)
 	mux.HandleFunc("POST /api/board/reset", s.resetBoard)
+	mux.HandleFunc("POST /api/repair/solve", s.solveRepair)
+	mux.HandleFunc("POST /api/repair/preview", s.previewRepair)
+	mux.HandleFunc("POST /api/repair/apply", s.applyRepair)
+	mux.HandleFunc("GET /api/repair/reports", s.listRepairs)
 
 	// Serve the built frontend if present.
 	dist := os.Getenv("PCB_STATIC")
