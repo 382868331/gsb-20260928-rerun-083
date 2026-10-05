@@ -81,3 +81,40 @@ export interface NetPathReport {
 }
 export type Tool = 'select' | 'trace' | 'pad' | 'via' | 'outline' | 'jumper'
 export interface Sel { kind: 'pad' | 'trace' | 'via' | 'jumper'; id: string }
+
+// Repair solver: one allowed modification with its assembly cost and
+// mutually exclusive alternatives.
+export interface RepairMod {
+  id: string
+  kind: 'jumper' | 'dnp' | 'populate'
+  jumperId?: string
+  padId?: string
+  cost: number
+  excludes?: string[]
+  note?: string
+}
+export interface RepairSolution {
+  modIds: string[]
+  cost: number
+  netStatus: NetStatus[]
+}
+export interface RepairResult {
+  status: 'ok' | 'no-solution' | 'incomplete'
+  revision: number
+  variantId: string
+  warnings: string[]
+  solutions: RepairSolution[]
+  conflicts: string[]
+}
+export interface NetShift { netId: string; netName: string; before: string; after: string }
+export interface ModPreview { modId: string; label: string; changes: NetShift[] }
+export interface RepairPreviewReport {
+  revision: number; variantId: string; warnings: string[]
+  mods: ModPreview[]; combined: NetShift[]
+}
+export interface StoredRepair {
+  id: string; time: string
+  basisRevision: number; appliedRevision?: number
+  variantId: string; modIds: string[]; cost: number
+  result: RepairResult; basis: Board
+}

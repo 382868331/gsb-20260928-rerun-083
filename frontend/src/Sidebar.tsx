@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from './api'
 import { normalizeBoard, normalizeCompare } from './normalize'
+import RepairPanel from './RepairPanel'
 import { compareKeyOf, MM, uid, useStore } from './store'
 import type { NetPathReport, NetStatus, PathStep, Tool } from './types'
 
@@ -478,6 +479,8 @@ export default function Sidebar() {
           </div>
         ))}
       </div>
+
+      <RepairPanel />
     </aside>
   )
 }

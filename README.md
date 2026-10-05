@@ -67,6 +67,20 @@ cd backend && go test ./...
   (incomplete, 如引用了不存在的器件或跳线), 单个方案异常不影响其他
   方案与当前板的检查、保存。只在某一方案中导通的网络可逐段查看其
   铜线/过孔/已装器件路径, 并标明路径来自当前几何还是旧修订。
+- **受约束的最小修复求解**: 用户声明必须连通的网络、禁止短接的
+  网络、允许更换的器件与可用跳线, 每项改装带成本与互斥装配条件;
+  `POST /api/board/repair/solve` 在当前装配与真实铜皮几何上穷举
+  所有满足互斥条件的改装组合, 返回全部最低成本组合 (而不是只修
+  第一条看到的开路)。会引入禁止短路的组合 (例如跳线与其他网络
+  共享连接点) 一律排除; 无解时返回可逐条复查的冲突要求 (哪个
+  改装能连通某网络、它又破坏了哪条约束)。缺失的网络/器件/跳线
+  引用或整段板资料缺失都判为 incomplete, 绝不当作检查通过。
+  `POST /api/board/repair/preview` 在实际应用前逐项预览每个改装
+  对各网络的影响; `POST /api/board/repair/apply` 把整个组合一次
+  应用: 应用前按当前保存的板修订重新核对, 修订已变化或组合不再
+  满足约束时拒绝 (409), 必须重新求解。每次应用的核对记录单独
+  存入 `backend/data/repairs.json` (含依据修订与应用后修订),
+  旧修订的冻结比较报告保持原样、互不影响。
 - **保存/导出/导入**: `PUT /api/board` 持久化到 `backend/data/board.json`;
   导出/导入为完整 JSON, 元件 ID 原样保留 (`TestExportImportPreservesIdentity`)。
 - **验证板**: 内置示例板含跨层交叉 (同网络名但不连通, 报开路) 与
@@ -83,6 +97,10 @@ cd backend && go test ./...
 | GET | /api/board/compares | 列出随工程保存的冻结比较报告 (含依据快照) |
 | POST | /api/board/compares | 冻结一份比较报告及其依据; 重新比较追加而非覆盖 |
 | POST | /api/board/netpath | 单网络在某方案中的逐段导通路径 ({board, variantId, netId}) |
+| POST | /api/board/repair/solve | 受装配约束的最低成本修复组合求解 |
+| POST | /api/board/repair/preview | 预览每项改装对各网络的影响 |
+| POST | /api/board/repair/apply | 复核后一次应用整个组合 (修订过期拒 409) |
+| GET | /api/board/repairs | 列出独立保存的修复核对记录 |
 | GET | /api/board/export | 导出 JSON |
 | POST | /api/board/import | 导入 JSON (保留 ID) |
 | POST | /api/board/reset | 重置为验证板 |

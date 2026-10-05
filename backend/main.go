@@ -12,6 +12,7 @@ import (
 type server struct {
 	st       *store
 	compares *compareStore
+	repairs  *repairStore
 	board    *Board
 }
 
@@ -237,7 +238,7 @@ func main() {
 			log.Printf("warn: cannot persist demo board: %v", err)
 		}
 	}
-	s := &server{st: st, compares: newCompareStore(dataPath), board: board}
+	s := &server{st: st, compares: newCompareStore(dataPath), repairs: newRepairStore(dataPath), board: board}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/board", s.getBoard)
@@ -247,6 +248,10 @@ func main() {
 	mux.HandleFunc("GET /api/board/compares", s.listCompares)
 	mux.HandleFunc("POST /api/board/compares", s.saveCompare)
 	mux.HandleFunc("POST /api/board/netpath", s.netPath)
+	mux.HandleFunc("POST /api/board/repair/solve", s.solveRepair)
+	mux.HandleFunc("POST /api/board/repair/preview", s.previewRepair)
+	mux.HandleFunc("POST /api/board/repair/apply", s.applyRepair)
+	mux.HandleFunc("GET /api/board/repairs", s.listRepairs)
 	mux.HandleFunc("GET /api/board/export", s.exportBoard)
 	mux.HandleFunc("POST /api/board/import", s.importBoard)
 	mux.HandleFunc("POST /api/board/reset", s.resetBoard)

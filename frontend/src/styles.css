@@ -32,6 +32,8 @@ input[type=number] { width: 90px; }
 .steps li.hop { list-style: none; margin-left: -10px; color: #e8c44a; }
 .steps li:hover { color: #fff; }
 .linkbtn { margin: 2px 0 4px; padding: 2px 8px; font-size: 11px; }
+.modrow { border-left: 2px solid #445; padding-left: 6px; margin: 4px 0; }
+.modrow input[type=text] { background: #1b1e23; color: #ddd; border: 1px solid #444; border-radius: 4px; padding: 3px 6px; width: 90px; }
 .canvas { flex: 1; position: relative; overflow: hidden; }
 .canvas svg { width: 100%; height: 100%; display: block; background: #14161a; touch-action: none; }
 .canvas.loading { display: flex; align-items: center; justify-content: center; }
